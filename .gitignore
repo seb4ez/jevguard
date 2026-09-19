@@ -1,0 +1,31 @@
+# Environment variables and secrets
+.env
+*.env
+.env.*
+
+# SQLite databases and WAL files
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+
+# Python byte-code and caches
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Distribution and packaging
+dist/
+build/
+*.egg-info/
+.eggs/
+
+# IDE and OS files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
