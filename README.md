@@ -116,6 +116,8 @@ print(resp2.telemetry["latency_total_ms"])      # 0.10 ms
 print(resp2.telemetry["tokens_saved"])          # 159 tokens
 ```
 
+> Note: Volatile masking operates on structured dictionary keys (for example `{"timestamp": 123}`). If dynamic timestamps are embedded inside raw unstructured strings (for example `{"log": "2026-09-19T22:00:00Z error"}`), the SHA-256 fingerprint will change. To ensure cache hits, extract dynamic timestamps and request IDs into distinct dictionary keys in `state`.
+
 ## Concurrent Batch and Async Execution
 
 ```python
@@ -127,7 +129,7 @@ items = [
 ]
 results = client.batch_evaluate(items, max_workers=5)
 
-# Asynchronous execution in asyncio loops
+# Native asynchronous execution in asyncio event loops (no manual thread wrapping required)
 import asyncio
 
 async def main():
@@ -142,6 +144,8 @@ asyncio.run(main())
 The following tests were executed against the live official TypeSafe AI endpoint (`https://api.typesafe.ai/v1/systemone` using model `jev-latest`):
 
 ![JevGuard Benchmark Results](benchmark_results.png)
+
+> Note on repository binaries: `benchmark_results.png` is tracked for direct presentation on the GitHub repository page. For automated CI pipelines executing continuous benchmarks, configure artifacts to upload to GitHub Releases or an asset branch to maintain minimal `.git` history size.
 
 | Scenario & Workload | Vanilla TypeSafe AI | JevGuard Runtime | Empirical Advantage |
 | :--- | :--- | :--- | :--- |
