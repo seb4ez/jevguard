@@ -16,7 +16,9 @@ logger = logging.getLogger("jevguard.cache")
 
 DEFAULT_VOLATILE_KEYS: Set[str] = {
     "timestamp", "time", "created_at", "updated_at",
-    "trace_id", "span_id", "request_id", "correlation_id", "nonce"
+    "trace_id", "span_id", "request_id", "correlation_id", "nonce",
+    "createdat", "updatedat", "traceid", "requestid",
+    "x_trace_id", "x_request_id", "x_correlation_id", "xtraceid", "xrequestid"
 }
 
 
@@ -86,16 +88,41 @@ class DeterministicCache:
             conn.commit()
 
     @classmethod
-    def _strip_volatile_keys(cls, data: Any, ignore_keys: Set[str]) -> Any:
-        if isinstance(data, dict):
-            return {
-                k: cls._strip_volatile_keys(v, ignore_keys)
-                for k, v in data.items()
-                if k.lower() not in ignore_keys
-            }
-        elif isinstance(data, list):
-            return [cls._strip_volatile_keys(item, ignore_keys) for item in data]
-        return data
+    def _strip_volatile_keys(cls, data: Any, ignore_keys: Set[str], seen: Optional[Set[int]] = None) -> Any:
+        if seen is None:
+            seen = set()
+
+        if isinstance(data, (dict, list, tuple, set, frozenset)):
+            obj_id = id(data)
+            if obj_id in seen:
+                return "<cyclic_ref>"
+            seen.add(obj_id)
+        else:
+            obj_id = None
+
+        try:
+            if isinstance(data, dict):
+                cleaned = {}
+                for k, v in data.items():
+                    norm_k = str(k).strip().lower().replace("-", "_")
+                    if norm_k in ignore_keys:
+                        continue
+                    cleaned[str(k)] = cls._strip_volatile_keys(v, ignore_keys, seen=seen)
+                return cleaned
+            elif isinstance(data, list):
+                return [cls._strip_volatile_keys(item, ignore_keys, seen=seen) for item in data]
+            elif isinstance(data, tuple):
+                return tuple(cls._strip_volatile_keys(item, ignore_keys, seen=seen) for item in data)
+            elif isinstance(data, (set, frozenset)):
+                items = [cls._strip_volatile_keys(item, ignore_keys, seen=seen) for item in data]
+                try:
+                    return sorted(items)
+                except TypeError:
+                    return sorted(items, key=lambda x: str(x))
+            return data
+        finally:
+            if obj_id is not None:
+                seen.remove(obj_id)
 
     @classmethod
     def compute_fingerprint(
@@ -106,7 +133,7 @@ class DeterministicCache:
         ignore_keys: Optional[Iterable[str]] = None
     ) -> str:
         keys_to_ignore = (
-            {k.lower() for k in ignore_keys}
+            {str(k).strip().lower().replace("-", "_") for k in ignore_keys}
             if ignore_keys is not None
             else DEFAULT_VOLATILE_KEYS
         )

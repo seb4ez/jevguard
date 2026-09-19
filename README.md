@@ -1,6 +1,6 @@
 # JevGuard: Deterministic Decision Runtime for TypeSafe AI (Jev)
 
-JevGuard is a deterministic evaluation, caching, and calibration runtime for TypeSafe AI's Jev model (System One). It wraps standard System One evaluations with closed-world escape injection, certainty calibration, state pruning, volatile key masking, zero-token SHA-256 caching, and episodic session memory using only the Python standard library.
+JevGuard is a deterministic evaluation, caching, and calibration runtime for TypeSafe AI's Jev model (System One). It wraps standard System One evaluations with closed-world escape injection, certainty calibration, state pruning, volatile key masking, zero-token SHA-256 caching, resilient retry backoff, and episodic session memory using only the Python standard library.
 
 ## Why JevGuard
 
@@ -16,10 +16,12 @@ TypeSafe AI's Jev model produces sub-second probabilistic evaluations over struc
 - **Strict Enum Support**: Set `closed_world=True` on `Choice` or `auto_inject_escapes=False` on the client when building strict, exhaustive enums where third-party options must not be introduced.
 - **Certainty & Dispersion Calibrator**: Flags decisions where top probability is below 0.40 or the margin between the first and second choices is below 0.15 as `AMBIGUOUS_STATE`.
 - **Volatile Metadata Masking**: Automatically ignores ephemeral fields (`timestamp`, `created_at`, `trace_id`, `request_id`, `nonce`) during SHA-256 fingerprinting, ensuring real-world production cache hits.
-- **Sub-Millisecond Overhead**: Pure local CPU computation runs in under 0.10 ms (96 microseconds) per evaluation.
+- **Sub-Millisecond Overhead**: Pure local CPU computation runs in under 0.20 ms (198 microseconds) per evaluation.
 - **Zero-Token SHA-256 Cache**: Hashes canonical sorted JSON. Identical requests return in under 1 millisecond with zero network overhead and zero token cost.
-- **Episodic SQLite Memory**: Records session interaction turns with connection reuse and builds rolling summaries without retransmitting raw history.
-- **Zero Dependencies**: Pure Python 3.9+ standard library (`urllib`, `sqlite3`, `hashlib`, `json`, `threading`). No pip dependencies, no Node.js.
+- **Concurrent Batch & Async Support**: Built-in `batch_evaluate` with thread pooling and native `async_evaluate` for `asyncio` event loops.
+- **Resilient Network Retries**: Exponential backoff with jitter and `Retry-After` header parsing for HTTP 429 and 5xx server errors.
+- **Episodic SQLite Memory**: Records session interaction turns with thread-local connection reuse and builds rolling summaries without retransmitting raw history.
+- **Zero Dependencies**: Pure Python 3.9+ standard library (`urllib`, `sqlite3`, `hashlib`, `json`, `threading`, `concurrent.futures`). No pip dependencies, no Node.js.
 
 ## Installation
 
@@ -110,43 +112,63 @@ resp1 = client.evaluate({"query": "Check balance", "timestamp": 1726778900, "tra
 resp2 = client.evaluate({"query": "Check balance", "timestamp": 1726778910, "trace_id": "t-2"}, questions)
 
 print(resp2.cached)                             # True
-print(resp2.telemetry["latency_total_ms"])      # 0.12 ms
-print(resp2.telemetry["tokens_saved"])          # 210 tokens
+print(resp2.telemetry["latency_total_ms"])      # 0.10 ms
+print(resp2.telemetry["tokens_saved"])          # 159 tokens
 ```
 
-## Multi-Turn Session Memory
+## Concurrent Batch and Async Execution
 
 ```python
-# Pass session_id to maintain turn history
-resp = client.evaluate(state, questions, session_id="session_user_42")
+# Synchronous parallel batch evaluation
+items = [
+    (state_1, questions),
+    (state_2, questions),
+    (state_3, questions)
+]
+results = client.batch_evaluate(items, max_workers=5)
 
-history = client.memory.get_session_history("session_user_42", limit=5)
-for turn in history:
-    print(f"Turn {turn['turn_number']}: verdict={turn['verdict']}")
+# Asynchronous execution in asyncio loops
+import asyncio
+
+async def main():
+    res = await client.async_evaluate(state, questions)
+    print(res.choices["route"].choice)
+
+asyncio.run(main())
 ```
 
-## Command Line Interface
+## Empirical Upstream Benchmark (5 Scenarios: Vanilla vs JevGuard)
 
-```bash
-# Evaluate from JSON files
-python -m jevguard.cli --state state.json --rules rules.json
+The following tests were executed against the live official TypeSafe AI endpoint (`https://api.typesafe.ai/v1/systemone` using model `jev-latest`):
 
-# Pipe JSON from stdin
-echo '{"state": {"err": "timeout"}, "questions": {"q": {"type": "noul", "instructions": "Timeout?"}}}' | python -m jevguard.cli
-```
+![JevGuard Benchmark Results](benchmark_results.png)
+
+| Scenario & Workload | Vanilla TypeSafe AI | JevGuard Runtime | Empirical Advantage |
+| :--- | :--- | :--- | :--- |
+| **1. Cloud SRE Incident Triage** | 810.85 ms (139 tokens) | 735.88 ms (147 tokens) | State pruned; status verified `CONFIDENT` |
+| **2. Fintech Gateway Timeout** | 733.24 ms (149 tokens) | 766.83 ms (164 tokens) | Ordinal score and decision calibrated |
+| **3. Off-Topic Query (Closed-World)** | 773.57 ms (Forced False Positive: `credit_card_chargeback`) | 778.96 ms (Safe Escape: `UNRESOLVED_OR_OTHER`) | **Zero false positive**; unhandled inquiry safely isolated |
+| **4. Strict Enum FSM** | 730.58 ms (Decision: `APPROVED`) | 766.93 ms (Decision: `APPROVED`) | Closed-world contract preserved; 0 escapes injected |
+| **5. Repeated Query with Volatile Timestamps** | 763.40 ms (Full network repeat, 144 tokens charged) | **0.099 ms** (Local RAM cache hit, **0 tokens**) | **7,711x latency speedup; 100% token savings** |
 
 ## Testing
 
-Run the test suite (21 unit, concurrency, lifecycle, and latency tests):
+Run the full test suite (28 unit, concurrency, lifecycle, heterogeneous types, and CLI tests):
 
 ```bash
 python test_jevguard.py
 ```
 
-Run the comparative benchmark against the upstream API:
+Run the standalone local latency audit:
 
 ```bash
 python benchmark.py
+```
+
+Run the live 5 vs 5 upstream comparison test (requires `TYPESAFE_API_KEY`):
+
+```bash
+python run_live_certification_tests.py
 ```
 
 ## License

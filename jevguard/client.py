@@ -1,14 +1,18 @@
 """
 jevguard.client - JevGuardClient evaluation client for TypeSafe AI / Jev.
 Provides drop-in compatibility with TypeSafeClient while adding deterministic caching,
-state pruning, closed-world escape injection, and certainty calibration.
+state pruning, closed-world escape injection, certainty calibration, resilient retries,
+and high-concurrency batch execution.
 """
 
 import os
 import time
 import json
+import random
+import socket
 import urllib.request
 import urllib.error
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, Iterable, List, Optional, Tuple, Union
 
 from .models import EvaluationResponse, Question, Noul, Score, Choice
@@ -16,6 +20,16 @@ from .optimizer import QuestionOptimizer, StatePruner
 from .calibrator import ResponseCalibrator
 from .cache import DeterministicCache
 from .memory import EpisodicMemory
+from .exceptions import (
+    JevGuardError,
+    JevGuardConfigError,
+    JevGuardNetworkError,
+    JevGuardTimeoutError,
+    JevGuardHTTPError,
+    JevGuardAuthenticationError,
+    JevGuardRateLimitError,
+    JevGuardServerError
+)
 
 DEFAULT_ENDPOINT = "https://api.typesafe.ai/v1/systemone"
 DEFAULT_MODEL = "jev-latest"
@@ -36,7 +50,9 @@ class JevGuardClient:
         enable_cache: bool = True,
         enable_memory: bool = True,
         auto_inject_escapes: bool = True,
-        cache_ignore_keys: Optional[Iterable[str]] = None
+        cache_ignore_keys: Optional[Iterable[str]] = None,
+        max_retries: int = 3,
+        initial_backoff: float = 0.5
     ):
         self.api_key = api_key or os.environ.get("TYPESAFE_API_KEY", "").strip()
         self.endpoint = endpoint
@@ -45,6 +61,8 @@ class JevGuardClient:
         self.enable_memory = enable_memory
         self.auto_inject_escapes = auto_inject_escapes
         self.cache_ignore_keys = cache_ignore_keys
+        self.max_retries = max_retries
+        self.initial_backoff = initial_backoff
 
         self.optimizer = QuestionOptimizer(default_model=self.model, auto_inject_escapes=self.auto_inject_escapes)
         self.calibrator = ResponseCalibrator()
@@ -70,7 +88,7 @@ class JevGuardClient:
         1. Prunes state to eliminate nulls and empty values.
         2. Injects closed-world escape alternatives when missing (unless auto_inject_escapes is False).
         3. Looks up deterministic SHA-256 cache with volatile key masking (0 tokens on hit).
-        4. Dispatches wire payload to TypeSafe AI System One.
+        4. Dispatches wire payload to TypeSafe AI System One with resilient retry backoff.
         5. Calibrates output probabilities and verifies certainty.
         6. Writes to cache and logs episodic session turns.
         """
@@ -118,7 +136,7 @@ class JevGuardClient:
                 return EvaluationResponse(resp_dict)
 
         if not self.api_key:
-            raise RuntimeError(
+            raise JevGuardConfigError(
                 "TYPESAFE_API_KEY is not configured. Set environment variable or pass api_key to JevGuardClient."
             )
 
@@ -174,6 +192,63 @@ class JevGuardClient:
         }
         return EvaluationResponse(resp_dict)
 
+    def batch_evaluate(
+        self,
+        batch_items: List[Tuple[Any, Union[Dict[str, Any], List[Dict[str, Any]]]]],
+        max_workers: int = 10,
+        bypass_cache: bool = False,
+        timeout: float = 30.0
+    ) -> List[EvaluationResponse]:
+        """
+        Executes concurrent batch evaluations using an internal thread pool,
+        preserving the exact input order of responses.
+        """
+        if not batch_items:
+            return []
+
+        def _eval_worker(item_tuple: Tuple[int, Tuple[Any, Any]]) -> Tuple[int, EvaluationResponse]:
+            idx, (item_state, item_questions) = item_tuple
+            res = self.evaluate(
+                state=item_state,
+                questions=item_questions,
+                bypass_cache=bypass_cache,
+                timeout=timeout
+            )
+            return idx, res
+
+        indexed_items = list(enumerate(batch_items))
+        with ThreadPoolExecutor(max_workers=min(max_workers, len(batch_items))) as executor:
+            indexed_results = list(executor.map(_eval_worker, indexed_items))
+
+        indexed_results.sort(key=lambda x: x[0])
+        return [res for _, res in indexed_results]
+
+    async def async_evaluate(
+        self,
+        state: Any,
+        questions: Union[Dict[str, Any], List[Dict[str, Any]]],
+        session_id: Optional[str] = None,
+        bypass_cache: bool = False,
+        timeout: float = 30.0,
+        auto_inject_escapes: Optional[bool] = None,
+        cache_ignore_keys: Optional[Iterable[str]] = None
+    ) -> EvaluationResponse:
+        """Asynchronous evaluation compatible with asyncio event loops."""
+        import asyncio
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            None,
+            lambda: self.evaluate(
+                state=state,
+                questions=questions,
+                session_id=session_id,
+                bypass_cache=bypass_cache,
+                timeout=timeout,
+                auto_inject_escapes=auto_inject_escapes,
+                cache_ignore_keys=cache_ignore_keys
+            )
+        )
+
     def system_one(
         self,
         state: Any,
@@ -192,30 +267,73 @@ class JevGuardClient:
             "User-Agent": "JevGuard-Runtime/1.0"
         }
 
-        req = urllib.request.Request(self.endpoint, data=raw_payload, headers=headers, method="POST")
-        t0 = time.perf_counter()
+        attempts = 0
+        max_attempts = max(1, self.max_retries + 1)
 
-        try:
-            with urllib.request.urlopen(req, timeout=timeout) as resp:
-                t1 = time.perf_counter()
-                latency_ms = round((t1 - t0) * 1000, 3)
-                body = resp.read().decode("utf-8", errors="replace")
-                data = json.loads(body) if body else {}
-                return {
-                    "success": True,
-                    "status_code": resp.getcode(),
-                    "latency_ms": latency_ms,
-                    "data": data
-                }
-        except urllib.error.HTTPError as err:
-            err_body = err.read().decode("utf-8", errors="replace")
+        while attempts < max_attempts:
+            attempts += 1
+            req = urllib.request.Request(self.endpoint, data=raw_payload, headers=headers, method="POST")
+            t0 = time.perf_counter()
+
             try:
-                err_data = json.loads(err_body)
-            except Exception:
-                err_data = {"raw": err_body}
-            raise RuntimeError(f"TypeSafe AI HTTP Error {err.code}: {err_data}")
-        except Exception as err:
-            raise RuntimeError(f"TypeSafe AI connection error: {err}")
+                with urllib.request.urlopen(req, timeout=timeout) as resp:
+                    t1 = time.perf_counter()
+                    latency_ms = round((t1 - t0) * 1000, 3)
+                    body = resp.read().decode("utf-8", errors="replace")
+                    data = json.loads(body) if body else {}
+                    return {
+                        "success": True,
+                        "status_code": resp.getcode(),
+                        "latency_ms": latency_ms,
+                        "data": data
+                    }
+
+            except urllib.error.HTTPError as err:
+                err_body = err.read().decode("utf-8", errors="replace")
+                try:
+                    err_data = json.loads(err_body)
+                except Exception:
+                    err_data = {"raw": err_body}
+
+                code = err.code
+                retry_after_hdr = err.headers.get("Retry-After") if err.headers else None
+                retry_after = float(retry_after_hdr) if retry_after_hdr and retry_after_hdr.isdigit() else None
+
+                # Non-retryable client errors
+                if code in (400, 401, 403, 404):
+                    if code in (401, 403):
+                        raise JevGuardAuthenticationError(code, str(err_data), err_data, retry_after)
+                    raise JevGuardHTTPError(code, str(err_data), err_data, retry_after)
+
+                # Retryable rate limit (429) or server errors (500, 502, 503, 504)
+                if attempts < max_attempts:
+                    sleep_time = retry_after if retry_after is not None else (
+                        self.initial_backoff * (2 ** (attempts - 1)) + random.uniform(0.05, 0.25)
+                    )
+                    time.sleep(sleep_time)
+                    continue
+
+                if code == 429:
+                    raise JevGuardRateLimitError(code, str(err_data), err_data, retry_after)
+                if code in (500, 502, 503, 504):
+                    raise JevGuardServerError(code, str(err_data), err_data, retry_after)
+                raise JevGuardHTTPError(code, str(err_data), err_data, retry_after)
+
+            except (socket.timeout, TimeoutError) as err:
+                if attempts < max_attempts:
+                    sleep_time = self.initial_backoff * (2 ** (attempts - 1)) + random.uniform(0.05, 0.25)
+                    time.sleep(sleep_time)
+                    continue
+                raise JevGuardTimeoutError(f"Connection to {self.endpoint} timed out after {timeout}s: {err}", timeout=timeout)
+
+            except Exception as err:
+                if attempts < max_attempts:
+                    sleep_time = self.initial_backoff * (2 ** (attempts - 1)) + random.uniform(0.05, 0.25)
+                    time.sleep(sleep_time)
+                    continue
+                raise JevGuardNetworkError(f"TypeSafe AI connection error: {err}")
+
+        raise JevGuardNetworkError("Failed to reach TypeSafe AI after maximum retry attempts.")
 
     def close(self) -> None:
         if self.cache is not None:

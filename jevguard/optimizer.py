@@ -17,6 +17,9 @@ ESCAPE_CANDIDATE_KEYS = {
 }
 
 
+import math
+
+
 class StatePruner:
     """Removes empty values, nulls, and duplicate whitespace to reduce input tokens."""
 
@@ -25,7 +28,7 @@ class StatePruner:
         if seen is None:
             seen = set()
 
-        if isinstance(data, (dict, list)):
+        if isinstance(data, (dict, list, tuple, set, frozenset)):
             obj_id = id(data)
             if obj_id in seen:
                 return "<cyclic_ref>"
@@ -39,12 +42,13 @@ class StatePruner:
                 for k, v in data.items():
                     if v is None:
                         continue
+                    str_k = str(k)
                     pruned_v = cls.prune(v, prune_lists=prune_lists, seen=seen)
                     if pruned_v is None:
                         continue
-                    if isinstance(pruned_v, (str, dict)) and len(pruned_v) == 0:
+                    if isinstance(pruned_v, (str, dict, list, tuple, set, frozenset)) and len(pruned_v) == 0:
                         continue
-                    pruned[k] = pruned_v
+                    pruned[str_k] = pruned_v
                 return pruned
 
             elif isinstance(data, list):
@@ -62,6 +66,21 @@ class StatePruner:
                     return pruned_list
                 else:
                     return [cls.prune(item, prune_lists=prune_lists, seen=seen) for item in data]
+
+            elif isinstance(data, tuple):
+                return tuple(cls.prune(item, prune_lists=prune_lists, seen=seen) for item in data)
+
+            elif isinstance(data, (set, frozenset)):
+                pruned_items = [cls.prune(item, prune_lists=prune_lists, seen=seen) for item in data]
+                try:
+                    return sorted(pruned_items)
+                except TypeError:
+                    return sorted(pruned_items, key=lambda x: str(x))
+
+            elif isinstance(data, float):
+                if math.isnan(data) or math.isinf(data):
+                    return None
+                return data
 
             elif isinstance(data, str):
                 return " ".join(data.strip().split())

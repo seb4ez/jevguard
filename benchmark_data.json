@@ -1,0 +1,38 @@
+{
+  "timestamp": 1789853636.979224,
+  "scenarios": [
+    {
+      "name": "SRE Incident Triage",
+      "vanilla_ms": 810.85,
+      "guard_ms": 735.875,
+      "speedup": 1.1
+    },
+    {
+      "name": "Fintech Timeout",
+      "vanilla_ms": 733.24,
+      "guard_ms": 766.826,
+      "speedup": 0.96
+    },
+    {
+      "name": "Off-Topic Closed World",
+      "vanilla_ms": 773.57,
+      "guard_ms": 778.956,
+      "vanilla_choice": "credit_card_chargeback",
+      "guard_choice": "UNRESOLVED_OR_OTHER",
+      "mitigation": "SAFE_ESCAPE"
+    },
+    {
+      "name": "Strict Enum FSM",
+      "vanilla_ms": 730.58,
+      "guard_ms": 766.93,
+      "strict_enum_preserved": true
+    },
+    {
+      "name": "Repeated Cache Query",
+      "vanilla_ms": 763.4,
+      "guard_ms": 0.099,
+      "tokens_saved": 159,
+      "speedup": 7711.1
+    }
+  ]
+}

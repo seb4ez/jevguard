@@ -1,24 +1,41 @@
 """
-test_jevguard.py - Comprehensive Unit & Concurrency Test Suite for JevGuard.
-Pure Python standard library (unittest, concurrent.futures, tempfile, os, time).
+test_jevguard.py - Comprehensive Unit, Concurrency, and Resilience Test Suite for JevGuard.
+Pure Python standard library (unittest, concurrent.futures, tempfile, os, time, asyncio).
 """
 
 import os
 import tempfile
 import time
+import asyncio
+import subprocess
+import sys
 import unittest
 from concurrent.futures import ThreadPoolExecutor
+
 from jevguard import (
     JevGuardClient,
     Noul,
     Score,
     Choice,
+    NoulAnswer,
+    ScoreAnswer,
+    ChoiceAnswer,
+    EvaluationResponse,
+    EvaluationResult,
     StatePruner,
     QuestionOptimizer,
     ResponseCalibrator,
     DeterministicCache,
     EpisodicMemory,
-    ESCAPE_OPTION_KEY
+    ESCAPE_OPTION_KEY,
+    JevGuardError,
+    JevGuardConfigError,
+    JevGuardNetworkError,
+    JevGuardTimeoutError,
+    JevGuardHTTPError,
+    JevGuardAuthenticationError,
+    JevGuardRateLimitError,
+    JevGuardServerError
 )
 
 
@@ -46,6 +63,9 @@ class TestJevGuardPrimitives(unittest.TestCase):
         self.assertTrue(c.closed_world)
         self.assertFalse(c.auto_inject_escape)
 
+    def test_evaluation_result_alias(self):
+        self.assertIs(EvaluationResult, EvaluationResponse)
+
 
 class TestJevGuardOptimizer(unittest.TestCase):
     def setUp(self):
@@ -60,6 +80,29 @@ class TestJevGuardOptimizer(unittest.TestCase):
         }
         pruned = StatePruner.prune(state)
         self.assertEqual(pruned, {"valid": "ok", "nested": {"number": 42}})
+
+    def test_state_pruning_heterogeneous_types(self):
+        """Sets, tuples, and floats (NaN/Inf) must be cleanly pruned without JSON serialization failure."""
+        state = {
+            "tags": {"python", "ai"},
+            "coordinates": (10.5, 20.2),
+            "nan_val": float("nan"),
+            "inf_val": float("inf"),
+            100: "integer_key"
+        }
+        pruned = StatePruner.prune(state)
+        self.assertIn("tags", pruned)
+        self.assertIsInstance(pruned["tags"], list)
+        self.assertEqual(pruned["tags"], ["ai", "python"])
+        self.assertEqual(pruned["coordinates"], (10.5, 20.2))
+        self.assertNotIn("nan_val", pruned)
+        self.assertNotIn("inf_val", pruned)
+        self.assertIn("100", pruned)
+
+        # Must be valid JSON
+        import json
+        dumped = json.dumps(pruned)
+        self.assertIn("integer_key", dumped)
 
     def test_state_pruning_preserves_list_positions(self):
         arr = ["first", "", "third", None]
@@ -102,7 +145,6 @@ class TestJevGuardOptimizer(unittest.TestCase):
         self.assertTrue(metadata["has_injected_escapes"])
 
     def test_closed_world_opt_out_preserves_strict_enum(self):
-        """When closed_world=True, UNRESOLVED_OR_OTHER must NOT be injected."""
         questions = {
             "action": Choice(
                 instructions="Approval decision",
@@ -117,7 +159,6 @@ class TestJevGuardOptimizer(unittest.TestCase):
         self.assertFalse(metadata["has_injected_escapes"])
 
     def test_global_auto_inject_escapes_disabled(self):
-        """When auto_inject_escapes=False, all choices preserve criteria intact."""
         opt_strict = QuestionOptimizer(auto_inject_escapes=False)
         questions = {
             "team": Choice(
@@ -201,30 +242,30 @@ class TestJevGuardCacheAndMemory(unittest.TestCase):
         self.assertEqual(cache.get_stats()["hits"], 1)
         cache.close()
 
-    def test_volatile_keys_masking_in_cache(self):
-        """Requests differing only in volatile keys (timestamp, trace_id, request_id) must produce cache hits."""
+    def test_volatile_keys_masking_with_heterogeneous_structures(self):
+        """Volatile keys inside dicts, tuples, sets and with non-string/dashed keys must produce cache hits."""
         cache = DeterministicCache(db_path=":memory:")
         state_1 = {
             "user_id": "usr_99",
-            "action": "login_failed",
-            "timestamp": 1726778900,
-            "trace_id": "abc-123-xyz",
-            "request_id": "req-001"
+            100: "num_key",
+            "tuple_meta": ({"timestamp": 1726778900}, "constant"),
+            "set_meta": {"tag1", "tag2"},
+            "request-id": "req-001"
         }
         state_2 = {
             "user_id": "usr_99",
-            "action": "login_failed",
-            "timestamp": 1726778905,
-            "trace_id": "def-456-uvw",
-            "request_id": "req-002"
+            100: "num_key",
+            "tuple_meta": ({"timestamp": 1726778999}, "constant"),
+            "set_meta": {"tag2", "tag1"},
+            "request-id": "req-999"
         }
-        questions = {"is_attack": {"type": "noul"}}
+        questions = {"is_valid": {"type": "noul"}}
 
         fp1 = cache.compute_fingerprint("jev-latest", state_1, questions)
         fp2 = cache.compute_fingerprint("jev-latest", state_2, questions)
         self.assertEqual(fp1, fp2)
 
-        cache.put(fp1, "jev-latest", {"answers": {"is_attack": {"noul": 0.88}}}, 15)
+        cache.put(fp1, "jev-latest", {"answers": {"is_valid": {"noul": 1.0}}}, 15)
         hit_for_state_2 = cache.get(fp2)
         self.assertIsNotNone(hit_for_state_2)
         self.assertEqual(cache.get_stats()["hits"], 1)
@@ -286,36 +327,69 @@ class TestJevGuardCacheAndMemory(unittest.TestCase):
             except Exception:
                 pass
 
-    def test_local_cpu_latency_overhead(self):
-        """Microbenchmark verifying that full local Python pipeline overhead is well under 1.0 ms."""
-        opt = QuestionOptimizer()
-        cal = ResponseCalibrator()
-        cache = DeterministicCache(db_path=":memory:")
 
-        state = {"user": "alice", "action": "checkout", "timestamp": 12345}
-        questions = {"route": Choice("Route", {"a": "A", "b": "B"})}
-        mock_raw = {"route": {"type": "choice", "choice": "a", "confidence": 0.9, "probabilities": {"a": 0.9, "b": 0.1}}}
+class TestJevGuardClientAndBatch(unittest.TestCase):
+    def test_client_config_error_without_api_key(self):
+        client = JevGuardClient(api_key="", enable_cache=False)
+        with self.assertRaises(JevGuardConfigError):
+            client.evaluate({"state": 1}, {"q": Noul("test")})
+        client.close()
 
-        # Warmup
-        for _ in range(20):
-            wire, _ = opt.optimize_and_wire(state, questions)
-            fp = cache.compute_fingerprint("jev-latest", wire["state"], wire["questions"])
-            cache.put(fp, "jev-latest", mock_raw, 10)
-            _ = cache.get(fp)
-            _ = cal.calibrate(mock_raw)
+    def test_batch_evaluate_preserves_order(self):
+        client = JevGuardClient(api_key="mock_key", cache_db_path=":memory:", memory_db_path=":memory:")
+        # Mock _dispatch_wire
+        client._dispatch_wire = lambda payload, timeout=30.0: {
+            "data": {"answers": {"q": {"type": "noul", "noul": float(payload["state"]["val"]) / 100.0}}}
+        }
 
-        N = 200
-        t0 = time.perf_counter()
-        for _ in range(N):
-            wire, _ = opt.optimize_and_wire(state, questions)
-            fp = cache.compute_fingerprint("jev-latest", wire["state"], wire["questions"])
-            _ = cache.get(fp)
-            _ = cal.calibrate(mock_raw)
-        t1 = time.perf_counter()
+        items = [
+            ({"val": 10}, {"q": Noul("Q1")}),
+            ({"val": 50}, {"q": Noul("Q2")}),
+            ({"val": 90}, {"q": Noul("Q3")})
+        ]
 
-        avg_ms = ((t1 - t0) * 1000) / N
-        self.assertLess(avg_ms, 1.0, f"Average local overhead ({avg_ms:.4f} ms) must be under 1.0 ms")
-        cache.close()
+        responses = client.batch_evaluate(items, max_workers=3)
+        self.assertEqual(len(responses), 3)
+        self.assertAlmostEqual(responses[0].nouls["q"].noul, 0.10)
+        self.assertAlmostEqual(responses[1].nouls["q"].noul, 0.50)
+        self.assertAlmostEqual(responses[2].nouls["q"].noul, 0.90)
+        client.close()
+
+    def test_async_evaluate_execution(self):
+        client = JevGuardClient(api_key="mock_key", cache_db_path=":memory:", memory_db_path=":memory:")
+        client._dispatch_wire = lambda payload, timeout=30.0: {
+            "data": {"answers": {"q": {"type": "noul", "noul": 0.95}}}
+        }
+
+        async def run_async():
+            return await client.async_evaluate({"text": "async test"}, {"q": Noul("Q")})
+
+        resp = asyncio.run(run_async())
+        self.assertAlmostEqual(resp.nouls["q"].noul, 0.95)
+        client.close()
+
+
+class TestJevGuardCLI(unittest.TestCase):
+    def test_cli_empty_stdin_exits_cleanly(self):
+        cmd = [sys.executable, "-m", "jevguard.cli"]
+        proc = subprocess.run(cmd, input="", capture_output=True, text=True)
+        self.assertEqual(proc.returncode, 2)
+        self.assertIn("Error", proc.stderr)
+        self.assertNotIn("Traceback", proc.stderr)
+
+    def test_cli_malformed_json_exits_cleanly(self):
+        cmd = [sys.executable, "-m", "jevguard.cli"]
+        proc = subprocess.run(cmd, input="{invalid_json}", capture_output=True, text=True)
+        self.assertEqual(proc.returncode, 2)
+        self.assertIn("Error: Invalid JSON on stdin", proc.stderr)
+        self.assertNotIn("Traceback", proc.stderr)
+
+    def test_cli_missing_rules_exits_cleanly(self):
+        cmd = [sys.executable, "-m", "jevguard.cli", "--state", '{"a": 1}']
+        proc = subprocess.run(cmd, capture_output=True, text=True)
+        self.assertEqual(proc.returncode, 2)
+        self.assertIn("Error: --rules", proc.stderr)
+        self.assertNotIn("Traceback", proc.stderr)
 
 
 if __name__ == "__main__":

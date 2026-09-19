@@ -161,3 +161,7 @@ class EvaluationResponse:
 
     def __repr__(self) -> str:
         return f"EvaluationResponse(success={self.success}, cached={self.cached}, answers={list(self.answers.keys())})"
+
+
+# Canonical alias for compatibility
+EvaluationResult = EvaluationResponse

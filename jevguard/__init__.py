@@ -12,15 +12,27 @@ from .models import (
     NoulAnswer,
     ScoreAnswer,
     ChoiceAnswer,
-    EvaluationResponse
+    EvaluationResponse,
+    EvaluationResult
 )
 from .client import JevGuardClient
 from .optimizer import StatePruner, QuestionOptimizer, ESCAPE_OPTION_KEY
 from .calibrator import ResponseCalibrator
 from .cache import DeterministicCache
 from .memory import EpisodicMemory
+from .exceptions import (
+    JevGuardError,
+    JevGuardConfigError,
+    JevGuardNetworkError,
+    JevGuardTimeoutError,
+    JevGuardHTTPError,
+    JevGuardAuthenticationError,
+    JevGuardRateLimitError,
+    JevGuardServerError
+)
 
 __version__ = "1.0.0"
+
 __all__ = [
     "JevGuardClient",
     "Question",
@@ -31,10 +43,19 @@ __all__ = [
     "ScoreAnswer",
     "ChoiceAnswer",
     "EvaluationResponse",
+    "EvaluationResult",
     "StatePruner",
     "QuestionOptimizer",
     "ResponseCalibrator",
     "DeterministicCache",
     "EpisodicMemory",
-    "ESCAPE_OPTION_KEY"
+    "ESCAPE_OPTION_KEY",
+    "JevGuardError",
+    "JevGuardConfigError",
+    "JevGuardNetworkError",
+    "JevGuardTimeoutError",
+    "JevGuardHTTPError",
+    "JevGuardAuthenticationError",
+    "JevGuardRateLimitError",
+    "JevGuardServerError"
 ]
