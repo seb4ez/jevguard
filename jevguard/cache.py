@@ -1,6 +1,6 @@
 """
 jevguard.cache - Zero-Token Deterministic Hashing Cache for TypeSafe AI / Jev.
-Stores decisions indexed by SHA-256 fingerprints of canonical JSON.
+Stores decisions indexed by SHA-256 fingerprints of canonical JSON with volatile key masking.
 """
 
 import contextlib
@@ -10,19 +10,35 @@ import logging
 import sqlite3
 import threading
 import time
-from typing import Any, Dict, Generator, Optional
+from typing import Any, Dict, Generator, Iterable, Optional, Set
 
 logger = logging.getLogger("jevguard.cache")
+
+DEFAULT_VOLATILE_KEYS: Set[str] = {
+    "timestamp", "time", "created_at", "updated_at",
+    "trace_id", "span_id", "request_id", "correlation_id", "nonce"
+}
 
 
 class DeterministicCache:
     """Provides instant 0-token response retrieval for repeated queries."""
 
-    def __init__(self, db_path: str = "jevguard_cache.db", max_memory_items: int = 500):
+    def __init__(
+        self,
+        db_path: str = "jevguard_cache.db",
+        max_memory_items: int = 500,
+        default_ignore_keys: Optional[Iterable[str]] = None
+    ):
         self.db_path = db_path
         self.max_memory_items = max_memory_items
+        self.default_ignore_keys = (
+            {k.lower() for k in default_ignore_keys}
+            if default_ignore_keys is not None
+            else DEFAULT_VOLATILE_KEYS
+        )
         self._memory_lru: Dict[str, Dict[str, Any]] = {}
         self._lock = threading.RLock()
+        self._local = threading.local()
         self._shared_conn: Optional[sqlite3.Connection] = None
 
         if self.db_path == ":memory:":
@@ -42,17 +58,18 @@ class DeterministicCache:
             with self._lock:
                 yield self._shared_conn
         else:
-            conn = sqlite3.connect(self.db_path, timeout=20.0)
-            conn.row_factory = sqlite3.Row
-            try:
-                conn.execute("PRAGMA journal_mode=WAL")
-                conn.execute("PRAGMA synchronous=NORMAL")
-            except Exception as e:
-                logger.debug("PRAGMA setup notice: %s", e)
-            try:
+            conn = getattr(self._local, "conn", None)
+            if conn is None:
+                conn = sqlite3.connect(self.db_path, timeout=20.0)
+                conn.row_factory = sqlite3.Row
+                try:
+                    conn.execute("PRAGMA journal_mode=WAL")
+                    conn.execute("PRAGMA synchronous=NORMAL")
+                except Exception as e:
+                    logger.debug("PRAGMA setup notice: %s", e)
+                self._local.conn = conn
+            with self._lock:
                 yield conn
-            finally:
-                conn.close()
 
     def _init_db(self) -> None:
         with self._get_connection() as conn:
@@ -69,10 +86,35 @@ class DeterministicCache:
             conn.commit()
 
     @classmethod
-    def compute_fingerprint(cls, model: str, state: Any, wire_questions: Dict[str, Any]) -> str:
+    def _strip_volatile_keys(cls, data: Any, ignore_keys: Set[str]) -> Any:
+        if isinstance(data, dict):
+            return {
+                k: cls._strip_volatile_keys(v, ignore_keys)
+                for k, v in data.items()
+                if k.lower() not in ignore_keys
+            }
+        elif isinstance(data, list):
+            return [cls._strip_volatile_keys(item, ignore_keys) for item in data]
+        return data
+
+    @classmethod
+    def compute_fingerprint(
+        cls,
+        model: str,
+        state: Any,
+        wire_questions: Dict[str, Any],
+        ignore_keys: Optional[Iterable[str]] = None
+    ) -> str:
+        keys_to_ignore = (
+            {k.lower() for k in ignore_keys}
+            if ignore_keys is not None
+            else DEFAULT_VOLATILE_KEYS
+        )
+        filtered_state = cls._strip_volatile_keys(state, keys_to_ignore) if keys_to_ignore else state
+
         canonical_struct = {
             "model": model.strip().lower(),
-            "state": state,
+            "state": filtered_state,
             "questions": wire_questions
         }
         canonical_bytes = json.dumps(
@@ -89,7 +131,7 @@ class DeterministicCache:
                 self.stats["hits"] += 1
                 item = self._memory_lru[fingerprint]
                 self.stats["tokens_saved"] += item.get("tokens_estimate", 0)
-                self._increment_db_hit(fingerprint)
+                item["hit_count"] = item.get("hit_count", 0) + 1
                 return item["data"]
 
         try:
@@ -106,7 +148,6 @@ class DeterministicCache:
                         tokens = row["tokens_estimate"]
                         self.stats["tokens_saved"] += tokens
                         self._promote_lru(fingerprint, data, tokens)
-                    self._increment_db_hit(fingerprint)
                     return data
         except Exception as err:
             logger.warning("Cache lookup error for %s: %s", fingerprint, err)
@@ -131,24 +172,14 @@ class DeterministicCache:
         except Exception as err:
             logger.warning("Cache store error for %s: %s", fingerprint, err)
 
-    def _increment_db_hit(self, fingerprint: str) -> None:
-        try:
-            with self._get_connection() as conn:
-                conn.execute(
-                    "UPDATE evaluation_cache SET hit_count = hit_count + 1 WHERE fingerprint = ?",
-                    (fingerprint,)
-                )
-                conn.commit()
-        except Exception as err:
-            logger.debug("Cache hit increment notice: %s", err)
-
     def _promote_lru(self, fingerprint: str, data: Dict[str, Any], tokens_estimate: int) -> None:
         if len(self._memory_lru) >= self.max_memory_items:
             oldest_key = next(iter(self._memory_lru))
             del self._memory_lru[oldest_key]
         self._memory_lru[fingerprint] = {
             "data": data,
-            "tokens_estimate": tokens_estimate
+            "tokens_estimate": tokens_estimate,
+            "hit_count": 0
         }
 
     def clear(self) -> None:
@@ -174,3 +205,22 @@ class DeterministicCache:
                 "hit_rate_pct": rate,
                 "tokens_saved": self.stats["tokens_saved"]
             }
+
+    def close(self) -> None:
+        with self._lock:
+            if self._shared_conn is not None:
+                try:
+                    self._shared_conn.close()
+                except Exception:
+                    pass
+                self._shared_conn = None
+            conn = getattr(self._local, "conn", None)
+            if conn is not None:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+                self._local.conn = None
+
+    def __del__(self) -> None:
+        self.close()

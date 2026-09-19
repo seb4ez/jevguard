@@ -62,11 +62,19 @@ class Choice(Question):
     Categorical routing primitive. Selects an option from a defined criteria map.
     """
 
-    def __init__(self, instructions: str, criteria: Dict[str, Optional[str]]):
+    def __init__(
+        self,
+        instructions: str,
+        criteria: Dict[str, Optional[str]],
+        closed_world: bool = False,
+        auto_inject_escape: bool = True
+    ):
         super().__init__("choice", instructions)
         if not isinstance(criteria, dict) or len(criteria) == 0:
             raise ValueError("Choice primitive requires 'criteria' as a non-empty dictionary.")
         self.criteria = {k: (v or "") for k, v in criteria.items()}
+        self.closed_world = closed_world
+        self.auto_inject_escape = auto_inject_escape and not closed_world
 
     def to_wire(self) -> Dict[str, Any]:
         return {

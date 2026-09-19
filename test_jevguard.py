@@ -1,10 +1,11 @@
 """
 test_jevguard.py - Comprehensive Unit & Concurrency Test Suite for JevGuard.
-Pure Python standard library (unittest, concurrent.futures, tempfile, os).
+Pure Python standard library (unittest, concurrent.futures, tempfile, os, time).
 """
 
 import os
 import tempfile
+import time
 import unittest
 from concurrent.futures import ThreadPoolExecutor
 from jevguard import (
@@ -39,6 +40,11 @@ class TestJevGuardPrimitives(unittest.TestCase):
         wire = c.to_wire()
         self.assertEqual(wire["type"], "choice")
         self.assertIn("billing", wire["criteria"])
+
+    def test_choice_closed_world_flag(self):
+        c = Choice("Strict route", {"a": "A", "b": "B"}, closed_world=True)
+        self.assertTrue(c.closed_world)
+        self.assertFalse(c.auto_inject_escape)
 
 
 class TestJevGuardOptimizer(unittest.TestCase):
@@ -83,7 +89,6 @@ class TestJevGuardOptimizer(unittest.TestCase):
         self.assertTrue(metadata["has_injected_escapes"])
 
     def test_domain_none_does_not_block_escape_injection(self):
-        """A valid domain option 'none' (e.g. pain: none/mild/severe) must NOT prevent escape injection."""
         questions = {
             "symptoms": Choice(
                 instructions="Symptom check",
@@ -95,6 +100,35 @@ class TestJevGuardOptimizer(unittest.TestCase):
         self.assertIn("none", criteria)
         self.assertIn(ESCAPE_OPTION_KEY, criteria)
         self.assertTrue(metadata["has_injected_escapes"])
+
+    def test_closed_world_opt_out_preserves_strict_enum(self):
+        """When closed_world=True, UNRESOLVED_OR_OTHER must NOT be injected."""
+        questions = {
+            "action": Choice(
+                instructions="Approval decision",
+                criteria={"APPROVED": "Approve request", "REJECTED": "Reject request"},
+                closed_world=True
+            )
+        }
+        wire_payload, metadata = self.opt.optimize_and_wire({"amount": 100}, questions)
+        criteria = wire_payload["questions"]["action"]["criteria"]
+        self.assertNotIn(ESCAPE_OPTION_KEY, criteria)
+        self.assertEqual(len(criteria), 2)
+        self.assertFalse(metadata["has_injected_escapes"])
+
+    def test_global_auto_inject_escapes_disabled(self):
+        """When auto_inject_escapes=False, all choices preserve criteria intact."""
+        opt_strict = QuestionOptimizer(auto_inject_escapes=False)
+        questions = {
+            "team": Choice(
+                instructions="Route",
+                criteria={"team_a": "Team A", "team_b": "Team B"}
+            )
+        }
+        wire_payload, metadata = opt_strict.optimize_and_wire({"task": "build"}, questions)
+        criteria = wire_payload["questions"]["team"]["criteria"]
+        self.assertNotIn(ESCAPE_OPTION_KEY, criteria)
+        self.assertFalse(metadata["has_injected_escapes"])
 
 
 class TestJevGuardCalibrator(unittest.TestCase):
@@ -165,6 +199,36 @@ class TestJevGuardCacheAndMemory(unittest.TestCase):
         item = cache.get(fp1)
         self.assertIsNotNone(item)
         self.assertEqual(cache.get_stats()["hits"], 1)
+        cache.close()
+
+    def test_volatile_keys_masking_in_cache(self):
+        """Requests differing only in volatile keys (timestamp, trace_id, request_id) must produce cache hits."""
+        cache = DeterministicCache(db_path=":memory:")
+        state_1 = {
+            "user_id": "usr_99",
+            "action": "login_failed",
+            "timestamp": 1726778900,
+            "trace_id": "abc-123-xyz",
+            "request_id": "req-001"
+        }
+        state_2 = {
+            "user_id": "usr_99",
+            "action": "login_failed",
+            "timestamp": 1726778905,
+            "trace_id": "def-456-uvw",
+            "request_id": "req-002"
+        }
+        questions = {"is_attack": {"type": "noul"}}
+
+        fp1 = cache.compute_fingerprint("jev-latest", state_1, questions)
+        fp2 = cache.compute_fingerprint("jev-latest", state_2, questions)
+        self.assertEqual(fp1, fp2)
+
+        cache.put(fp1, "jev-latest", {"answers": {"is_attack": {"noul": 0.88}}}, 15)
+        hit_for_state_2 = cache.get(fp2)
+        self.assertIsNotNone(hit_for_state_2)
+        self.assertEqual(cache.get_stats()["hits"], 1)
+        cache.close()
 
     def test_episodic_memory(self):
         mem = EpisodicMemory(db_path=":memory:")
@@ -174,6 +238,7 @@ class TestJevGuardCacheAndMemory(unittest.TestCase):
         self.assertEqual(t2, 2)
         ctx = mem.build_rolling_context("s1")
         self.assertEqual(ctx["prior_turns_count"], 2)
+        mem.close()
 
     def test_multithreaded_concurrency(self):
         cache = DeterministicCache(db_path=":memory:")
@@ -192,6 +257,8 @@ class TestJevGuardCacheAndMemory(unittest.TestCase):
         self.assertEqual(len(turns), 40)
         history = mem.get_session_history("sess_concurrent", limit=50)
         self.assertEqual(len(history), 40)
+        cache.close()
+        mem.close()
 
     def test_disk_connection_lifecycle_and_cleanup(self):
         temp_dir = tempfile.mkdtemp()
@@ -201,9 +268,7 @@ class TestJevGuardCacheAndMemory(unittest.TestCase):
             cache.put("fp1", "jev-latest", {"data": "test"}, 15)
             val = cache.get("fp1")
             self.assertEqual(val["data"], "test")
-
-            # Must be cleanly deletable without Windows handle lock
-            cache.clear()
+            cache.close()
         finally:
             if os.path.exists(db_path):
                 try:
@@ -220,6 +285,37 @@ class TestJevGuardCacheAndMemory(unittest.TestCase):
                 os.rmdir(temp_dir)
             except Exception:
                 pass
+
+    def test_local_cpu_latency_overhead(self):
+        """Microbenchmark verifying that full local Python pipeline overhead is well under 1.0 ms."""
+        opt = QuestionOptimizer()
+        cal = ResponseCalibrator()
+        cache = DeterministicCache(db_path=":memory:")
+
+        state = {"user": "alice", "action": "checkout", "timestamp": 12345}
+        questions = {"route": Choice("Route", {"a": "A", "b": "B"})}
+        mock_raw = {"route": {"type": "choice", "choice": "a", "confidence": 0.9, "probabilities": {"a": 0.9, "b": 0.1}}}
+
+        # Warmup
+        for _ in range(20):
+            wire, _ = opt.optimize_and_wire(state, questions)
+            fp = cache.compute_fingerprint("jev-latest", wire["state"], wire["questions"])
+            cache.put(fp, "jev-latest", mock_raw, 10)
+            _ = cache.get(fp)
+            _ = cal.calibrate(mock_raw)
+
+        N = 200
+        t0 = time.perf_counter()
+        for _ in range(N):
+            wire, _ = opt.optimize_and_wire(state, questions)
+            fp = cache.compute_fingerprint("jev-latest", wire["state"], wire["questions"])
+            _ = cache.get(fp)
+            _ = cal.calibrate(mock_raw)
+        t1 = time.perf_counter()
+
+        avg_ms = ((t1 - t0) * 1000) / N
+        self.assertLess(avg_ms, 1.0, f"Average local overhead ({avg_ms:.4f} ms) must be under 1.0 ms")
+        cache.close()
 
 
 if __name__ == "__main__":

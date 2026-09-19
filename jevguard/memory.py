@@ -21,6 +21,7 @@ class EpisodicMemory:
     def __init__(self, db_path: str = "jevguard_memory.db"):
         self.db_path = db_path
         self._lock = threading.RLock()
+        self._local = threading.local()
         self._shared_conn: Optional[sqlite3.Connection] = None
         if self.db_path == ":memory:":
             self._shared_conn = sqlite3.connect(":memory:", check_same_thread=False)
@@ -33,17 +34,18 @@ class EpisodicMemory:
             with self._lock:
                 yield self._shared_conn
         else:
-            conn = sqlite3.connect(self.db_path, timeout=20.0)
-            conn.row_factory = sqlite3.Row
-            try:
-                conn.execute("PRAGMA journal_mode=WAL")
-                conn.execute("PRAGMA synchronous=NORMAL")
-            except Exception as e:
-                logger.debug("PRAGMA setup notice: %s", e)
-            try:
+            conn = getattr(self._local, "conn", None)
+            if conn is None:
+                conn = sqlite3.connect(self.db_path, timeout=20.0)
+                conn.row_factory = sqlite3.Row
+                try:
+                    conn.execute("PRAGMA journal_mode=WAL")
+                    conn.execute("PRAGMA synchronous=NORMAL")
+                except Exception as e:
+                    logger.debug("PRAGMA setup notice: %s", e)
+                self._local.conn = conn
+            with self._lock:
                 yield conn
-            finally:
-                conn.close()
 
     def _init_db(self) -> None:
         with self._get_connection() as conn:
@@ -155,3 +157,22 @@ class EpisodicMemory:
         with self._get_connection() as conn:
             conn.execute("DELETE FROM session_turns WHERE session_id = ?", (session_id.strip(),))
             conn.commit()
+
+    def close(self) -> None:
+        with self._lock:
+            if self._shared_conn is not None:
+                try:
+                    self._shared_conn.close()
+                except Exception:
+                    pass
+                self._shared_conn = None
+            conn = getattr(self._local, "conn", None)
+            if conn is not None:
+                try:
+                    conn.close()
+                except Exception:
+                    pass
+                self._local.conn = None
+
+    def __del__(self) -> None:
+        self.close()

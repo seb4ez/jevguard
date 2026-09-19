@@ -9,7 +9,7 @@ import time
 import json
 import urllib.request
 import urllib.error
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, Iterable, List, Optional, Tuple, Union
 
 from .models import EvaluationResponse, Question, Noul, Score, Choice
 from .optimizer import QuestionOptimizer, StatePruner
@@ -33,17 +33,27 @@ class JevGuardClient:
         model: str = DEFAULT_MODEL,
         cache_db_path: str = "jevguard_cache.db",
         memory_db_path: str = "jevguard_memory.db",
-        enable_cache: bool = True
+        enable_cache: bool = True,
+        enable_memory: bool = True,
+        auto_inject_escapes: bool = True,
+        cache_ignore_keys: Optional[Iterable[str]] = None
     ):
         self.api_key = api_key or os.environ.get("TYPESAFE_API_KEY", "").strip()
         self.endpoint = endpoint
         self.model = model
         self.enable_cache = enable_cache
+        self.enable_memory = enable_memory
+        self.auto_inject_escapes = auto_inject_escapes
+        self.cache_ignore_keys = cache_ignore_keys
 
-        self.optimizer = QuestionOptimizer(default_model=self.model)
+        self.optimizer = QuestionOptimizer(default_model=self.model, auto_inject_escapes=self.auto_inject_escapes)
         self.calibrator = ResponseCalibrator()
-        self.cache = DeterministicCache(db_path=cache_db_path) if enable_cache else None
-        self.memory = EpisodicMemory(db_path=memory_db_path)
+        self.cache = (
+            DeterministicCache(db_path=cache_db_path, default_ignore_keys=cache_ignore_keys)
+            if enable_cache
+            else None
+        )
+        self.memory = EpisodicMemory(db_path=memory_db_path) if enable_memory else None
 
     def evaluate(
         self,
@@ -51,28 +61,38 @@ class JevGuardClient:
         questions: Union[Dict[str, Any], List[Dict[str, Any]]],
         session_id: Optional[str] = None,
         bypass_cache: bool = False,
-        timeout: float = 30.0
+        timeout: float = 30.0,
+        auto_inject_escapes: Optional[bool] = None,
+        cache_ignore_keys: Optional[Iterable[str]] = None
     ) -> EvaluationResponse:
         """
         Executes the deterministic JevGuard evaluation pipeline:
         1. Prunes state to eliminate nulls and empty values.
-        2. Injects closed-world escape alternatives when missing.
-        3. Looks up deterministic SHA-256 cache (0 tokens on hit).
+        2. Injects closed-world escape alternatives when missing (unless auto_inject_escapes is False).
+        3. Looks up deterministic SHA-256 cache with volatile key masking (0 tokens on hit).
         4. Dispatches wire payload to TypeSafe AI System One.
         5. Calibrates output probabilities and verifies certainty.
         6. Writes to cache and logs episodic session turns.
         """
         t0 = time.perf_counter()
 
-        wire_payload, opt_metadata = self.optimizer.optimize_and_wire(state, questions, self.model)
+        should_inject = self.auto_inject_escapes if auto_inject_escapes is None else auto_inject_escapes
+        wire_payload, opt_metadata = self.optimizer.optimize_and_wire(
+            state=state,
+            questions=questions,
+            model=self.model,
+            auto_inject_escapes=should_inject
+        )
         tokens_estimate = opt_metadata["estimated_tokens"]
 
         fingerprint = None
         if self.enable_cache and not bypass_cache and self.cache:
+            ignore_keys = cache_ignore_keys if cache_ignore_keys is not None else self.cache_ignore_keys
             fingerprint = self.cache.compute_fingerprint(
-                wire_payload["model"],
-                wire_payload["state"],
-                wire_payload["questions"]
+                model=wire_payload["model"],
+                state=wire_payload["state"],
+                wire_questions=wire_payload["questions"],
+                ignore_keys=ignore_keys
             )
             cached_item = self.cache.get(fingerprint)
             if cached_item:
@@ -122,7 +142,7 @@ class JevGuardClient:
             )
 
         turn_number = 0
-        if session_id:
+        if session_id and self.enable_memory and self.memory:
             turn_number = self.memory.record_turn(
                 session_id=session_id,
                 state=wire_payload["state"],
@@ -196,3 +216,12 @@ class JevGuardClient:
             raise RuntimeError(f"TypeSafe AI HTTP Error {err.code}: {err_data}")
         except Exception as err:
             raise RuntimeError(f"TypeSafe AI connection error: {err}")
+
+    def close(self) -> None:
+        if self.cache is not None:
+            self.cache.close()
+        if self.memory is not None:
+            self.memory.close()
+
+    def __del__(self) -> None:
+        self.close()

@@ -83,19 +83,22 @@ class StatePruner:
 class QuestionOptimizer:
     """Prepares and validates questions prior to upstream Jev dispatch."""
 
-    def __init__(self, default_model: str = "jev-latest"):
+    def __init__(self, default_model: str = "jev-latest", auto_inject_escapes: bool = True):
         self.default_model = default_model
+        self.auto_inject_escapes = auto_inject_escapes
 
     def optimize_and_wire(
         self,
         state: Any,
         questions: Union[Dict[str, Any], List[Dict[str, Any]]],
-        model: Optional[str] = None
+        model: Optional[str] = None,
+        auto_inject_escapes: Optional[bool] = None
     ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
         target_model = (model or self.default_model).strip() or self.default_model
         pruned_state = StatePruner.prune(state)
 
-        wire_questions, injected_escapes = self.normalize_questions(questions)
+        should_inject = self.auto_inject_escapes if auto_inject_escapes is None else auto_inject_escapes
+        wire_questions, injected_escapes = self.normalize_questions(questions, auto_inject_escapes=should_inject)
 
         wire_payload = {
             "model": target_model,
@@ -108,6 +111,7 @@ class QuestionOptimizer:
             "total_questions": len(wire_questions),
             "injected_escapes": injected_escapes,
             "has_injected_escapes": len(injected_escapes) > 0,
+            "auto_inject_escapes_enabled": should_inject,
             "estimated_tokens": StatePruner.estimate_tokens(wire_payload)
         }
 
@@ -115,7 +119,8 @@ class QuestionOptimizer:
 
     def normalize_questions(
         self,
-        questions: Union[Dict[str, Any], List[Dict[str, Any]]]
+        questions: Union[Dict[str, Any], List[Dict[str, Any]]],
+        auto_inject_escapes: bool = True
     ) -> Tuple[Dict[str, Dict[str, Any]], Dict[str, str]]:
         if not questions:
             raise ValueError("Questions payload cannot be empty.")
@@ -125,7 +130,7 @@ class QuestionOptimizer:
 
         if isinstance(questions, dict):
             for name, q in questions.items():
-                wire_q, injected = self._process_question(name, q)
+                wire_q, injected = self._process_question(name, q, auto_inject_escapes=auto_inject_escapes)
                 wire_questions[name] = wire_q
                 if injected:
                     injected_escapes[name] = ESCAPE_OPTION_KEY
@@ -135,7 +140,7 @@ class QuestionOptimizer:
                 if not isinstance(q, dict):
                     raise ValueError(f"Question at index {idx} must be a dictionary or Question instance.")
                 name = str(q.get("name") or f"q_{idx + 1}").strip()
-                wire_q, injected = self._process_question(name, q)
+                wire_q, injected = self._process_question(name, q, auto_inject_escapes=auto_inject_escapes)
                 wire_questions[name] = wire_q
                 if injected:
                     injected_escapes[name] = ESCAPE_OPTION_KEY
@@ -144,9 +149,18 @@ class QuestionOptimizer:
 
         return wire_questions, injected_escapes
 
-    def _process_question(self, name: str, q: Any) -> Tuple[Dict[str, Any], bool]:
+    def _process_question(
+        self,
+        name: str,
+        q: Any,
+        auto_inject_escapes: bool = True
+    ) -> Tuple[Dict[str, Any], bool]:
+        allow_escape = True
+
         if isinstance(q, Question):
             wire_dict = q.to_wire()
+            if isinstance(q, Choice):
+                allow_escape = getattr(q, "auto_inject_escape", True)
         elif isinstance(q, dict):
             q_type = q.get("type", "noul").lower()
             instructions = q.get("instructions") or q.get("question") or ""
@@ -156,7 +170,9 @@ class QuestionOptimizer:
                 wire_dict = Score(instructions, q.get("criteria", [])).to_wire()
             elif q_type == "choice":
                 crit = q.get("criteria") if isinstance(q.get("criteria"), dict) else q.get("options", {})
-                wire_dict = Choice(instructions, crit).to_wire()
+                closed = bool(q.get("closed_world", False))
+                allow_escape = q.get("auto_inject_escape", not closed)
+                wire_dict = Choice(instructions, crit, closed_world=closed, auto_inject_escape=allow_escape).to_wire()
             else:
                 raise ValueError(f"Unsupported question type '{q_type}' in '{name}'")
         else:
@@ -164,7 +180,7 @@ class QuestionOptimizer:
 
         injected_escape = False
 
-        if wire_dict["type"] == "choice":
+        if wire_dict["type"] == "choice" and auto_inject_escapes and allow_escape:
             criteria = dict(wire_dict.get("criteria", {}))
             has_escape = any(k.strip().lower() in ESCAPE_CANDIDATE_KEYS for k in criteria.keys())
             if not has_escape:
