@@ -169,6 +169,14 @@ python examples/02_strict_finite_state_machine.py
 python examples/03_high_throughput_batch_caching.py
 ```
 
+## Model Context Protocol (MCP) Server
+
+JevGuard provides an official zero-dependency MCP server for AI coding assistants (Claude Desktop, Cursor IDE, LibreChat, and Cline):
+
+* **Repository**: [seb4ez/jevguard-mcp](https://github.com/seb4ez/jevguard-mcp)
+* **Execution**: Runs as a native stdio process using Python standard library (`python -m jevguard_mcp.server`).
+* **Available Primitives**: Evaluator with escape injection, probability calibrator (`AMBIGUOUS_STATE`), state pruner, and SHA-256 fingerprint generator.
+
 ## Testing & Verification
 
 Run the 21 formal subsystem certification tests:
