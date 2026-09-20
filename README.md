@@ -184,7 +184,7 @@ This suite validates all 5 core subsystems under production conditions:
 4. Volatile Masking & Zero-Token Cache (Tests 14 to 17)
 5. Resilience, Batch & Async Transport (Tests 18 to 21)
 
-Run the 28 comprehensive regression and concurrency tests:
+Run the 30 comprehensive regression and concurrency tests:
 
 ```bash
 python test_jevguard.py

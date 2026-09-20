@@ -60,20 +60,33 @@ class ResponseCalibrator:
 
     def _calibrate_choice(self, item: Dict[str, Any]) -> None:
         probs = item.get("probabilities", {})
-        if not probs or not isinstance(probs, dict):
-            conf = float(item.get("confidence", 0.0))
+        parsed_pairs = []
+        if isinstance(probs, dict):
+            for k, v in probs.items():
+                try:
+                    parsed_pairs.append((k, float(v)))
+                except (ValueError, TypeError):
+                    pass
+
+        if not parsed_pairs:
+            try:
+                conf = float(item.get("confidence", 0.0))
+            except (ValueError, TypeError):
+                conf = 0.0
             is_amb = conf < self.min_top_prob
             item["is_ambiguous"] = is_amb
             item["status"] = "AMBIGUOUS_STATE" if is_amb else "CONFIDENT"
             item["calibration"] = {
+                "top_choice": item.get("choice"),
                 "top_probability": conf,
+                "runner_up_choice": None,
                 "runner_up_probability": 0.0,
                 "dispersion_gap": conf,
                 "reasons": ["low_confidence"] if is_amb else []
             }
             return
 
-        sorted_pairs = sorted([(k, float(v)) for k, v in probs.items()], key=lambda x: x[1], reverse=True)
+        sorted_pairs = sorted(parsed_pairs, key=lambda x: x[1], reverse=True)
         top_k, top_p = sorted_pairs[0]
         runner_k, runner_p = sorted_pairs[1] if len(sorted_pairs) > 1 else (None, 0.0)
         gap = top_p - runner_p
@@ -97,7 +110,11 @@ class ResponseCalibrator:
         }
 
     def _calibrate_score(self, item: Dict[str, Any]) -> None:
-        conf = float(item.get("confidence", 1.0))
+        try:
+            conf = float(item.get("confidence", 1.0))
+        except (ValueError, TypeError):
+            conf = 0.0
+
         probs = item.get("probabilities", {})
         reasons = []
 
@@ -106,15 +123,22 @@ class ResponseCalibrator:
 
         dispersion_gap = conf
         if isinstance(probs, dict) and len(probs) >= 2:
-            sorted_probs = sorted([float(v) for v in probs.values()], reverse=True)
-            top_p = sorted_probs[0]
-            runner_p = sorted_probs[1]
-            dispersion_gap = top_p - runner_p
-            if top_p < self.min_top_prob:
-                if "low_confidence" not in reasons:
-                    reasons.append("low_confidence")
-            if dispersion_gap < self.min_dispersion_gap:
-                reasons.append("flat_distribution")
+            parsed_probs = []
+            for v in probs.values():
+                try:
+                    parsed_probs.append(float(v))
+                except (ValueError, TypeError):
+                    pass
+            if len(parsed_probs) >= 2:
+                sorted_probs = sorted(parsed_probs, reverse=True)
+                top_p = sorted_probs[0]
+                runner_p = sorted_probs[1]
+                dispersion_gap = top_p - runner_p
+                if top_p < self.min_top_prob:
+                    if "low_confidence" not in reasons:
+                        reasons.append("low_confidence")
+                if dispersion_gap < self.min_dispersion_gap:
+                    reasons.append("flat_distribution")
 
         is_amb = len(reasons) > 0
         item["is_ambiguous"] = is_amb

@@ -228,6 +228,27 @@ class TestJevGuardCalibrator(unittest.TestCase):
         self.assertEqual(summary["verdict"], "AMBIGUOUS_STATE")
         self.assertIn("boundary_uncertainty", calibrated["is_malicious"]["calibration"]["reasons"])
 
+    def test_calibrator_malformed_probabilities_safe(self):
+        raw = {
+            "route": {
+                "type": "choice",
+                "choice": "A",
+                "confidence": "not_a_number",
+                "probabilities": {"A": "invalid", "B": 0.85}
+            },
+            "score": {
+                "type": "score",
+                "score": 1,
+                "confidence": None,
+                "probabilities": {"0": "invalid_num", "1": 0.9}
+            }
+        }
+        calibrated, summary = self.cal.calibrate(raw)
+        self.assertIn("route", calibrated)
+        self.assertIn("score", calibrated)
+        self.assertEqual(calibrated["route"]["calibration"]["top_choice"], "B")
+        self.assertEqual(calibrated["route"]["calibration"]["top_probability"], 0.85)
+
 
 class TestJevGuardCacheAndMemory(unittest.TestCase):
     def test_cache_hits_and_invariance(self):
@@ -366,6 +387,14 @@ class TestJevGuardClientAndBatch(unittest.TestCase):
 
         resp = asyncio.run(run_async())
         self.assertAlmostEqual(resp.nouls["q"].noul, 0.95)
+        client.close()
+
+    def test_retry_after_float_parsing(self):
+        client = JevGuardClient(api_key="mock_key", cache_db_path=":memory:", memory_db_path=":memory:")
+        delay = client._compute_backoff_delay(0, retry_after_header="2.5")
+        self.assertEqual(delay, 2.5)
+        delay_invalid = client._compute_backoff_delay(0, retry_after_header="not_a_number")
+        self.assertGreater(delay_invalid, 0.0)
         client.close()
 
 

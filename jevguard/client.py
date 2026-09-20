@@ -308,7 +308,14 @@ class JevGuardClient:
 
                 code = err.code
                 retry_after_hdr = err.headers.get("Retry-After") if err.headers else None
-                retry_after = float(retry_after_hdr) if retry_after_hdr and retry_after_hdr.isdigit() else None
+                retry_after = None
+                if retry_after_hdr:
+                    try:
+                        parsed_val = float(retry_after_hdr)
+                        if parsed_val >= 0:
+                            retry_after = parsed_val
+                    except (ValueError, TypeError):
+                        pass
 
                 # Non-retryable client errors
                 if code in (400, 401, 403, 404):
