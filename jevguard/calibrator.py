@@ -144,3 +144,24 @@ class ResponseCalibrator:
             "boundary_distance": round(dist, 4),
             "reasons": ["boundary_uncertainty"] if is_amb else []
         }
+
+    def calibrate_choice(self, item: Dict[str, Any]) -> Dict[str, Any]:
+        """Convenience method to calibrate a single choice answer dictionary in-place."""
+        c = dict(item)
+        self._calibrate_choice(c)
+        return c
+
+    def calibrate_score(self, item: Dict[str, Any]) -> Dict[str, Any]:
+        """Convenience method to calibrate a single score answer dictionary in-place."""
+        s = dict(item)
+        self._calibrate_score(s)
+        return s
+
+    def calibrate_noul(self, item: Dict[str, Any]) -> Dict[str, Any]:
+        """Convenience method to calibrate a single noul answer dictionary in-place."""
+        n = dict(item)
+        self._calibrate_noul(n)
+        return n
+
+
+CertaintyCalibrator = ResponseCalibrator

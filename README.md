@@ -155,21 +155,49 @@ The following tests were executed against the live official TypeSafe AI endpoint
 | **4. Strict Enum FSM** | 730.58 ms (Decision: `APPROVED`) | 766.93 ms (Decision: `APPROVED`) | Closed-world contract preserved; 0 escapes injected |
 | **5. Repeated Query with Volatile Timestamps** | 763.40 ms (Full network repeat, 144 tokens charged) | **0.099 ms** (Local RAM cache hit, **0 tokens**) | **7,711x latency speedup; 100% token savings** |
 
-## Testing
+## Examples
 
-Run the full test suite (28 unit, concurrency, lifecycle, heterogeneous types, and CLI tests):
+Runnable demonstration scripts are included in the `examples/` directory:
+
+```bash
+# 1. SRE Incident Triage: State pruning and multi-question evaluation
+python examples/01_sre_incident_triage.py
+
+# 2. Strict Finite State Machine: Enforcing closed_world=True with zero escapes
+python examples/02_strict_finite_state_machine.py
+
+# 3. High-Throughput Batch & Caching: Thread pool evaluation and volatile key masking
+python examples/03_high_throughput_batch_caching.py
+```
+
+## Testing & Verification
+
+Run the 21 formal subsystem certification tests:
+
+```bash
+python test_suite_21.py
+```
+
+This suite validates all 5 core subsystems under production conditions:
+1. State Pruner & Normalization (Tests 1 to 5)
+2. Closed-World Optimizer (Tests 6 to 9)
+3. Calibration & Dispersion Engine (Tests 10 to 13)
+4. Volatile Masking & Zero-Token Cache (Tests 14 to 17)
+5. Resilience, Batch & Async Transport (Tests 18 to 21)
+
+Run the 28 comprehensive regression and concurrency tests:
 
 ```bash
 python test_jevguard.py
 ```
 
-Run the standalone local latency audit:
+Run the microsecond CPU latency audit:
 
 ```bash
 python benchmark.py
 ```
 
-Run the live 5 vs 5 upstream comparison test (requires `TYPESAFE_API_KEY`):
+Run the live upstream comparative test (requires `TYPESAFE_API_KEY`):
 
 ```bash
 python run_live_certification_tests.py

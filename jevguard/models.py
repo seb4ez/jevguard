@@ -159,6 +159,11 @@ class EvaluationResponse:
                 self.answers[name] = parsed
                 self.choices[name] = parsed
 
+    @property
+    def raw_response(self) -> Dict[str, Any]:
+        """Access original underlying response dictionary."""
+        return self.raw
+
     def __repr__(self) -> str:
         return f"EvaluationResponse(success={self.success}, cached={self.cached}, answers={list(self.answers.keys())})"
 

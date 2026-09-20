@@ -259,6 +259,17 @@ class JevGuardClient:
         """Alias matching official TypeSafeClient.system_one interface."""
         return self.evaluate(state, questions, session_id=session_id, bypass_cache=bypass_cache)
 
+    def _compute_backoff_delay(self, attempt: int, retry_after_header: Optional[str] = None) -> float:
+        """Calculates exponential backoff delay with jitter, respecting Retry-After header if present."""
+        if retry_after_header:
+            try:
+                val = float(retry_after_header)
+                if val >= 0:
+                    return val
+            except (ValueError, TypeError):
+                pass
+        return self.initial_backoff * (2 ** attempt) + random.uniform(0.05, 0.25)
+
     def _dispatch_wire(self, wire_payload: Dict[str, Any], timeout: float = 30.0) -> Dict[str, Any]:
         raw_payload = json.dumps(wire_payload, separators=(",", ":")).encode("utf-8")
         headers = {
@@ -307,9 +318,7 @@ class JevGuardClient:
 
                 # Retryable rate limit (429) or server errors (500, 502, 503, 504)
                 if attempts < max_attempts:
-                    sleep_time = retry_after if retry_after is not None else (
-                        self.initial_backoff * (2 ** (attempts - 1)) + random.uniform(0.05, 0.25)
-                    )
+                    sleep_time = self._compute_backoff_delay(attempts - 1, retry_after_hdr)
                     time.sleep(sleep_time)
                     continue
 

@@ -17,8 +17,8 @@ from .models import (
 )
 from .client import JevGuardClient
 from .optimizer import StatePruner, QuestionOptimizer, ESCAPE_OPTION_KEY
-from .calibrator import ResponseCalibrator
-from .cache import DeterministicCache
+from .calibrator import ResponseCalibrator, CertaintyCalibrator
+from .cache import DeterministicCache, SemanticCache
 from .memory import EpisodicMemory
 from .exceptions import (
     JevGuardError,
@@ -47,7 +47,9 @@ __all__ = [
     "StatePruner",
     "QuestionOptimizer",
     "ResponseCalibrator",
+    "CertaintyCalibrator",
     "DeterministicCache",
+    "SemanticCache",
     "EpisodicMemory",
     "ESCAPE_OPTION_KEY",
     "JevGuardError",

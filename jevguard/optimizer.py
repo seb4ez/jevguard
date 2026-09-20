@@ -136,6 +136,22 @@ class QuestionOptimizer:
 
         return wire_payload, metadata
 
+    def optimize(
+        self,
+        questions: Union[Dict[str, Any], List[Dict[str, Any]]],
+        auto_inject_escapes: Optional[bool] = None
+    ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+        """Optimizes question definitions directly and detects injected escapes without requiring state."""
+        should_inject = self.auto_inject_escapes if auto_inject_escapes is None else auto_inject_escapes
+        wire_questions, injected_escapes = self.normalize_questions(questions, auto_inject_escapes=should_inject)
+        metadata = {
+            "total_questions": len(wire_questions),
+            "injected_escapes": injected_escapes,
+            "has_injected_escapes": len(injected_escapes) > 0,
+            "auto_inject_escapes_enabled": should_inject
+        }
+        return wire_questions, metadata
+
     def normalize_questions(
         self,
         questions: Union[Dict[str, Any], List[Dict[str, Any]]],

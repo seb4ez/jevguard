@@ -127,22 +127,34 @@ class DeterministicCache:
     @classmethod
     def compute_fingerprint(
         cls,
-        model: str,
-        state: Any,
-        wire_questions: Dict[str, Any],
+        model: str = "jev-latest",
+        state: Any = None,
+        wire_questions: Optional[Dict[str, Any]] = None,
         ignore_keys: Optional[Iterable[str]] = None
     ) -> str:
+        # Detect positional invocation without model: compute_fingerprint(state, questions, ignore_keys)
+        if isinstance(model, (dict, list)):
+            if wire_questions is not None and not isinstance(wire_questions, dict):
+                ignore_keys = wire_questions
+            wire_questions = state if isinstance(state, dict) else {}
+            state = model
+            model = "jev-latest"
+
+        target_model = model or "jev-latest"
+        target_state = state if state is not None else {}
+        target_questions = wire_questions if wire_questions is not None else {}
+
         keys_to_ignore = (
             {str(k).strip().lower().replace("-", "_") for k in ignore_keys}
             if ignore_keys is not None
             else DEFAULT_VOLATILE_KEYS
         )
-        filtered_state = cls._strip_volatile_keys(state, keys_to_ignore) if keys_to_ignore else state
+        filtered_state = cls._strip_volatile_keys(target_state, keys_to_ignore) if keys_to_ignore else target_state
 
         canonical_struct = {
-            "model": model.strip().lower(),
+            "model": target_model.strip().lower(),
             "state": filtered_state,
-            "questions": wire_questions
+            "questions": target_questions
         }
         canonical_bytes = json.dumps(
             canonical_struct,
@@ -151,6 +163,16 @@ class DeterministicCache:
             ensure_ascii=True
         ).encode("utf-8")
         return hashlib.sha256(canonical_bytes).hexdigest()
+
+    def set(
+        self,
+        fingerprint: str,
+        data: Dict[str, Any],
+        model: str = "jev-latest",
+        input_tokens_estimate: int = 0
+    ) -> None:
+        """Alias for put() following standard key-value cache conventions."""
+        self.put(fingerprint, model, data, input_tokens_estimate)
 
     def get(self, fingerprint: str) -> Optional[Dict[str, Any]]:
         with self._lock:
@@ -251,3 +273,6 @@ class DeterministicCache:
 
     def __del__(self) -> None:
         self.close()
+
+
+SemanticCache = DeterministicCache
