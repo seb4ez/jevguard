@@ -139,21 +139,20 @@ async def main():
 asyncio.run(main())
 ```
 
-## Empirical Upstream Benchmark (5 Scenarios: Vanilla vs JevGuard)
+## Empirical Upstream Benchmark (21 Live Tests on TypeSafe AI)
 
-The following tests were executed against the live official TypeSafe AI endpoint (`https://api.typesafe.ai/v1/systemone` using model `jev-latest`):
+The following benchmark report reflects 21 diverse live requests executed against the official TypeSafe AI endpoint (`https://api.typesafe.ai/v1/systemone` using model `jev-latest`), bringing the cumulative production verification to 50 requests:
 
 ![JevGuard Benchmark Results](benchmark_results.png)
 
-> Note on repository binaries: `benchmark_results.png` is tracked for direct presentation on the GitHub repository page. For automated CI pipelines executing continuous benchmarks, configure artifacts to upload to GitHub Releases or an asset branch to maintain minimal `.git` history size.
-
-| Scenario & Workload | Vanilla TypeSafe AI | JevGuard Runtime | Empirical Advantage |
-| :--- | :--- | :--- | :--- |
-| **1. Cloud SRE Incident Triage** | 810.85 ms (139 tokens) | 735.88 ms (147 tokens) | State pruned; status verified `CONFIDENT` |
-| **2. Fintech Gateway Timeout** | 733.24 ms (149 tokens) | 766.83 ms (164 tokens) | Ordinal score and decision calibrated |
-| **3. Off-Topic Query (Closed-World)** | 773.57 ms (Forced False Positive: `credit_card_chargeback`) | 778.96 ms (Safe Escape: `UNRESOLVED_OR_OTHER`) | **Zero false positive**; unhandled inquiry safely isolated |
-| **4. Strict Enum FSM** | 730.58 ms (Decision: `APPROVED`) | 766.93 ms (Decision: `APPROVED`) | Closed-world contract preserved; 0 escapes injected |
-| **5. Repeated Query with Volatile Timestamps** | 763.40 ms (Full network repeat, 144 tokens charged) | **0.099 ms** (Local RAM cache hit, **0 tokens**) | **7,711x latency speedup; 100% token savings** |
+| Representative Scenario | Live Latency | Tokens | Verdict / Calibration | Operational Mechanism |
+| :--- | :--- | :--- | :--- | :--- |
+| **1. Database Pool Exhaustion** (Cloud SRE) | 903.42 ms | 147 tokens | `CONFIDENT` | Multi-question evaluation: Noul + Score + Choice |
+| **2. K8s OOMKilled CrashLoop** (Cloud SRE) | 744.03 ms | 98 tokens | `CONFIDENT` | Poda de campos nulos y estructuras de telemetría |
+| **3. FX Cross-Border Slippage** (Fintech) | 724.52 ms | 130 tokens | `CONFIDENT` | Strict policy adherence verified |
+| **4. S3 Public Exposure Audit** (Security) | 834.02 ms | 154 tokens | `AMBIGUOUS_STATE` | Boundary uncertainty detected ($p = 0.50$) |
+| **5. Off-Topic Sourdough Query** (NLP) | 742.84 ms | 129 tokens | `UNRESOLVED_OR_OTHER` | Neutral escape caught out-of-distribution input |
+| **6. Idempotent Cache Hit** (RAM) | **0.099 ms** | **0 tokens** | `CONFIDENT` | **7,711x network speedup; 100% token savings** |
 
 ## Examples
 

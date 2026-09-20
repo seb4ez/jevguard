@@ -1,38 +1,281 @@
 {
-  "timestamp": 1789853636.979224,
+  "timestamp": 1789928324.543006,
+  "total_live_tests": 21,
+  "average_latency_ms": 784.53,
+  "total_tokens_consumed": 2785,
   "scenarios": [
     {
-      "name": "SRE Incident Triage",
-      "vanilla_ms": 810.85,
-      "guard_ms": 735.875,
-      "speedup": 1.1
+      "id": 1,
+      "domain": "Cloud SRE",
+      "name": "Database Pool Exhaustion",
+      "latency_ms": 903.42,
+      "tokens": 147,
+      "cached": false,
+      "answers": {
+        "is_outage": "Noul(0.88, affirmative=True)",
+        "severity": "Score(2.79, conf=0.79)",
+        "remediation": "Choice('scale_pool', status=CONFIDENT)"
+      },
+      "calibration": "CONFIDENT"
     },
     {
-      "name": "Fintech Timeout",
-      "vanilla_ms": 733.24,
-      "guard_ms": 766.826,
-      "speedup": 0.96
+      "id": 2,
+      "domain": "Cloud SRE",
+      "name": "CDN Ingress 502 Spike",
+      "latency_ms": 754.05,
+      "tokens": 129,
+      "cached": false,
+      "answers": {
+        "is_ddos": "Noul(0.37, affirmative=False)",
+        "action": "Choice('activate_under_attack', status=CONFIDENT)"
+      },
+      "calibration": "CONFIDENT"
     },
     {
-      "name": "Off-Topic Closed World",
-      "vanilla_ms": 773.57,
-      "guard_ms": 778.956,
-      "vanilla_choice": "credit_card_chargeback",
-      "guard_choice": "UNRESOLVED_OR_OTHER",
-      "mitigation": "SAFE_ESCAPE"
+      "id": 3,
+      "domain": "Cloud SRE",
+      "name": "K8s OOMKilled CrashLoop",
+      "latency_ms": 744.03,
+      "tokens": 98,
+      "cached": false,
+      "answers": {
+        "is_memory_leak": "Noul(0.77, affirmative=True)",
+        "ticket_priority": "Score(2.70, conf=0.70)"
+      },
+      "calibration": "CONFIDENT"
     },
     {
-      "name": "Strict Enum FSM",
-      "vanilla_ms": 730.58,
-      "guard_ms": 766.93,
-      "strict_enum_preserved": true
+      "id": 4,
+      "domain": "Fintech",
+      "name": "Double Billing Webhook",
+      "latency_ms": 753.05,
+      "tokens": 124,
+      "cached": false,
+      "answers": {
+        "is_duplicate_charge": "Noul(0.54, affirmative=True)",
+        "resolution": "Choice('refund_secondary', status=CONFIDENT)"
+      },
+      "calibration": "AMBIGUOUS_STATE"
     },
     {
-      "name": "Repeated Cache Query",
-      "vanilla_ms": 763.4,
-      "guard_ms": 0.099,
-      "tokens_saved": 159,
-      "speedup": 7711.1
+      "id": 5,
+      "domain": "Fintech",
+      "name": "Wire Transfer AML Risk",
+      "latency_ms": 884.34,
+      "tokens": 126,
+      "cached": false,
+      "answers": {
+        "is_suspicious_aml": "Noul(0.46, affirmative=False)",
+        "compliance_action": "Choice('block_freeze', status=AMBIGUOUS_STATE)"
+      },
+      "calibration": "AMBIGUOUS_STATE"
+    },
+    {
+      "id": 6,
+      "domain": "Fintech",
+      "name": "FX Cross-Border Slippage",
+      "latency_ms": 724.52,
+      "tokens": 130,
+      "cached": false,
+      "answers": {
+        "violates_execution_policy": "Noul(0.98, affirmative=True)",
+        "settlement_verdict": "Choice('REJECT_FILL', status=CONFIDENT)"
+      },
+      "calibration": "CONFIDENT"
+    },
+    {
+      "id": 7,
+      "domain": "E-Commerce",
+      "name": "Flash Sale Lock Contention",
+      "latency_ms": 725.75,
+      "tokens": 135,
+      "cached": false,
+      "answers": {
+        "has_overselling_risk": "Noul(0.87, affirmative=True)",
+        "lock_strategy": "Choice('queue_requests', status=CONFIDENT)"
+      },
+      "calibration": "CONFIDENT"
+    },
+    {
+      "id": 8,
+      "domain": "E-Commerce",
+      "name": "Drop-Shipping Fraud Cluster",
+      "latency_ms": 785.84,
+      "tokens": 112,
+      "cached": false,
+      "answers": {
+        "is_fraudulent_order": "Noul(0.75, affirmative=True)",
+        "risk_score": "Score(3.39, conf=0.61)"
+      },
+      "calibration": "AMBIGUOUS_STATE"
+    },
+    {
+      "id": 9,
+      "domain": "E-Commerce",
+      "name": "Return RMA Serial Mismatch",
+      "latency_ms": 737.51,
+      "tokens": 129,
+      "cached": false,
+      "answers": {
+        "is_wardrobing_or_swap": "Noul(0.42, affirmative=False)",
+        "disposition": "Choice('INVESTIGATE', status=AMBIGUOUS_STATE)"
+      },
+      "calibration": "AMBIGUOUS_STATE"
+    },
+    {
+      "id": 10,
+      "domain": "Healthcare",
+      "name": "ER Triage Vital Drift",
+      "latency_ms": 739.92,
+      "tokens": 110,
+      "cached": false,
+      "answers": {
+        "is_septic_shock": "Noul(0.84, affirmative=True)",
+        "esi_triage_tier": "Score(3.99, conf=0.99)"
+      },
+      "calibration": "CONFIDENT"
+    },
+    {
+      "id": 11,
+      "domain": "Healthcare",
+      "name": "Prescription Drug Warning",
+      "latency_ms": 878.72,
+      "tokens": 134,
+      "cached": false,
+      "answers": {
+        "has_fatal_interaction": "Noul(0.88, affirmative=True)",
+        "rx_action": "Choice('BLOCK_DISPENSE', status=CONFIDENT)"
+      },
+      "calibration": "CONFIDENT"
+    },
+    {
+      "id": 12,
+      "domain": "Security",
+      "name": "Impossible Travel Velocity",
+      "latency_ms": 777.06,
+      "tokens": 157,
+      "cached": false,
+      "answers": {
+        "is_account_takeover": "Noul(0.88, affirmative=True)",
+        "security_enforcement": "Choice('REVOKE_SESSIONS', status=CONFIDENT)"
+      },
+      "calibration": "CONFIDENT"
+    },
+    {
+      "id": 13,
+      "domain": "Security",
+      "name": "SSH Bastion Brute Force",
+      "latency_ms": 737.67,
+      "tokens": 138,
+      "cached": false,
+      "answers": {
+        "is_active_attack": "Noul(0.93, affirmative=True)",
+        "defense": "Choice('DROP_IP_PERMANENT', status=CONFIDENT)"
+      },
+      "calibration": "CONFIDENT"
+    },
+    {
+      "id": 14,
+      "domain": "Security",
+      "name": "S3 Public Bucket Exposure",
+      "latency_ms": 834.02,
+      "tokens": 154,
+      "cached": false,
+      "answers": {
+        "is_data_exposure_breach": "Noul(0.50, affirmative=True)",
+        "remediation": "Choice('ENFORCE_BLOCK_PUBLIC', status=CONFIDENT)"
+      },
+      "calibration": "AMBIGUOUS_STATE"
+    },
+    {
+      "id": 15,
+      "domain": "Support NLP",
+      "name": "Enterprise VIP Escalation",
+      "latency_ms": 805.04,
+      "tokens": 160,
+      "cached": false,
+      "answers": {
+        "is_churn_threat": "Noul(0.94, affirmative=True)",
+        "routing": "Choice('PAGE_VP_CUSTOMER_SUCCESS', status=CONFIDENT)"
+      },
+      "calibration": "CONFIDENT"
+    },
+    {
+      "id": 16,
+      "domain": "Support NLP",
+      "name": "Off-Topic Out of Bounds",
+      "latency_ms": 742.84,
+      "tokens": 129,
+      "cached": false,
+      "answers": {
+        "support_category": "Choice('UNRESOLVED_OR_OTHER', status=CONFIDENT)"
+      },
+      "calibration": "CONFIDENT"
+    },
+    {
+      "id": 17,
+      "domain": "Support NLP",
+      "name": "Conflicting Dispute Signal",
+      "latency_ms": 798.52,
+      "tokens": 116,
+      "cached": false,
+      "answers": {
+        "dispute_favors_buyer": "Noul(0.34, affirmative=False)",
+        "verdict_tier": "Score(1.52, conf=0.32)"
+      },
+      "calibration": "AMBIGUOUS_STATE"
+    },
+    {
+      "id": 18,
+      "domain": "Logistics",
+      "name": "Fuel Level Drop & Deviance",
+      "latency_ms": 790.68,
+      "tokens": 158,
+      "cached": false,
+      "answers": {
+        "is_fuel_theft": "Noul(0.78, affirmative=True)",
+        "dispatcher_action": "Choice('DISPATCH_SECURITY', status=CONFIDENT)"
+      },
+      "calibration": "CONFIDENT"
+    },
+    {
+      "id": 19,
+      "domain": "Logistics",
+      "name": "Cold-Chain Vaccine Drift",
+      "latency_ms": 719.63,
+      "tokens": 128,
+      "cached": false,
+      "answers": {
+        "is_cargo_spoiled": "Noul(0.62, affirmative=True)",
+        "quarantine_status": "Choice('QUARANTINE_DESTROY', status=AMBIGUOUS_STATE)"
+      },
+      "calibration": "AMBIGUOUS_STATE"
+    },
+    {
+      "id": 20,
+      "domain": "DevOps",
+      "name": "Canary Rollback Automation",
+      "latency_ms": 876.8,
+      "tokens": 129,
+      "cached": false,
+      "answers": {
+        "trigger_auto_rollback": "Noul(0.87, affirmative=True)",
+        "deployment_decision": "Choice('ROLLBACK_IMMEDIATELY', status=CONFIDENT)"
+      },
+      "calibration": "CONFIDENT"
+    },
+    {
+      "id": 21,
+      "domain": "Compliance",
+      "name": "GDPR Right to be Forgotten",
+      "latency_ms": 761.63,
+      "tokens": 142,
+      "cached": false,
+      "answers": {
+        "is_eligible_for_immediate_deletion": "Noul(0.46, affirmative=False)",
+        "compliance_workflow": "Choice('EXECUTE_PURGE', status=CONFIDENT)"
+      },
+      "calibration": "AMBIGUOUS_STATE"
     }
   ]
 }
