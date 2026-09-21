@@ -493,6 +493,54 @@ class TestHardeningRemediation(unittest.TestCase):
         time.sleep(0.15)
         self.assertIsNone(cache.get("fp_test_ttl"))
 
+    def test_created_at_and_updated_at_not_masked_by_default(self):
+        fp1 = DeterministicCache.compute_fingerprint(
+            model="jev-latest",
+            state={"order_id": "ord_100", "created_at": 1000, "updated_at": 1000}
+        )
+        fp2 = DeterministicCache.compute_fingerprint(
+            model="jev-latest",
+            state={"order_id": "ord_100", "created_at": 2000, "updated_at": 2000}
+        )
+        self.assertNotEqual(fp1, fp2, "created_at and updated_at must NOT be stripped by default to prevent version collisions")
+
+    def test_ssrf_unauthorized_endpoints_blocked(self):
+        with self.assertRaises(JevGuardConfigError):
+            JevGuardClient(api_key="test", endpoint="https://api.typesafe.ai@evil.com/v1/systemone")
+
+        with self.assertRaises(JevGuardConfigError):
+            JevGuardClient(api_key="test", endpoint="https://api.typesafe.ai.evil.com/v1/systemone")
+
+        with self.assertRaises(JevGuardConfigError):
+            JevGuardClient(api_key="test", endpoint="http://api.typesafe.ai/v1/systemone")
+
+    def test_http_redirect_raises_blocked_error(self):
+        import urllib.error
+        from jevguard.client import NoRedirectHandler
+        handler = NoRedirectHandler()
+        with self.assertRaises(urllib.error.HTTPError) as ctx:
+            handler.redirect_request(None, None, 302, "Found", {}, "https://evil.com/leak")
+        self.assertEqual(ctx.exception.code, 302)
+        self.assertIn("blocked for security", str(ctx.exception.reason))
+
+    def test_calibrator_nan_and_inf_fails_closed(self):
+        calibrator = ResponseCalibrator()
+        answers = {
+            "c": {"type": "choice", "choice": "a", "confidence": float("nan"), "probabilities": {"a": float("inf")}},
+            "n": {"type": "noul", "noul": float("nan")},
+            "s": {"type": "score", "confidence": float("inf"), "score": 2}
+        }
+        calibrated, summary = calibrator.calibrate(answers)
+        self.assertTrue(calibrated["c"]["is_ambiguous"])
+        self.assertTrue(calibrated["n"]["is_ambiguous"])
+        self.assertTrue(calibrated["s"]["is_ambiguous"])
+        self.assertEqual(summary["verdict"], "AMBIGUOUS_STATE")
+
+    def test_pruner_literal_command_whitespace_preservation(self):
+        cmd = 'rm -rf "/tmp/a  b"'
+        pruned = StatePruner.prune(cmd, collapse_whitespace=False)
+        self.assertEqual(pruned, cmd)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

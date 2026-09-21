@@ -12,6 +12,7 @@ import random
 import socket
 import urllib.request
 import urllib.error
+import urllib.parse
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, Iterable, List, Optional, Tuple, Union
 
@@ -35,6 +36,48 @@ DEFAULT_ENDPOINT = "https://api.typesafe.ai/v1/systemone"
 DEFAULT_MODEL = "jev-latest"
 
 
+class NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Refuses to follow HTTP redirects to prevent authorization header leakage."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        raise urllib.error.HTTPError(
+            newurl, code, f"HTTP redirect ({code}) to '{newurl}' blocked for security.", headers, fp
+        )
+
+
+def is_authorized_endpoint(endpoint: str) -> bool:
+    """Strictly validates that endpoint targets an authorized TypeSafe AI hostname without userinfo or spoofing."""
+    try:
+        parsed = urllib.parse.urlsplit(endpoint.strip())
+    except Exception:
+        return False
+
+    if parsed.scheme != "https":
+        return False
+
+    if parsed.username or parsed.password:
+        return False
+
+    hostname = (parsed.hostname or "").lower().strip()
+    if not hostname:
+        return False
+
+    allowed_hosts = {"api.typesafe.ai", "typesafe.ai"}
+    custom_allowed = os.environ.get("JEVGUARD_ALLOWED_ENDPOINTS", "")
+    if custom_allowed:
+        for entry in custom_allowed.split(","):
+            entry = entry.strip()
+            if entry:
+                try:
+                    custom_parsed = urllib.parse.urlsplit(entry if "://" in entry else f"https://{entry}")
+                    if custom_parsed.hostname:
+                        allowed_hosts.add(custom_parsed.hostname.lower())
+                except Exception:
+                    pass
+
+    return hostname in allowed_hosts
+
+
 class JevGuardClient:
     """
     High-performance, deterministic evaluation client for TypeSafe AI System One / Jev.
@@ -56,6 +99,10 @@ class JevGuardClient:
     ):
         self.api_key = api_key or os.environ.get("TYPESAFE_API_KEY", "").strip()
         self.endpoint = endpoint
+        if not is_authorized_endpoint(self.endpoint):
+            raise JevGuardConfigError(
+                f"Endpoint '{self.endpoint}' is not permitted. Only official TypeSafe AI endpoints or JEVGUARD_ALLOWED_ENDPOINTS are authorized."
+            )
         self.model = model
         self.enable_cache = enable_cache
         self.enable_memory = enable_memory
@@ -280,6 +327,7 @@ class JevGuardClient:
 
         attempts = 0
         max_attempts = max(1, self.max_retries + 1)
+        opener = urllib.request.build_opener(NoRedirectHandler())
 
         while attempts < max_attempts:
             attempts += 1
@@ -287,7 +335,7 @@ class JevGuardClient:
             t0 = time.perf_counter()
 
             try:
-                with urllib.request.urlopen(req, timeout=timeout) as resp:
+                with opener.open(req, timeout=timeout) as resp:
                     t1 = time.perf_counter()
                     latency_ms = round((t1 - t0) * 1000, 3)
                     body = resp.read().decode("utf-8", errors="replace")
@@ -352,10 +400,21 @@ class JevGuardClient:
         raise JevGuardNetworkError("Failed to reach TypeSafe AI after maximum retry attempts.")
 
     def close(self) -> None:
-        if self.cache is not None:
-            self.cache.close()
-        if self.memory is not None:
-            self.memory.close()
+        cache = getattr(self, "cache", None)
+        if cache is not None:
+            try:
+                cache.close()
+            except Exception:
+                pass
+        memory = getattr(self, "memory", None)
+        if memory is not None:
+            try:
+                memory.close()
+            except Exception:
+                pass
 
     def __del__(self) -> None:
-        self.close()
+        try:
+            self.close()
+        except Exception:
+            pass

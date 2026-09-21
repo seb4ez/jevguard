@@ -24,7 +24,13 @@ class StatePruner:
     """Removes empty values, nulls, and duplicate whitespace to reduce input tokens."""
 
     @classmethod
-    def prune(cls, data: Any, prune_lists: bool = False, seen: Optional[Set[int]] = None) -> Any:
+    def prune(
+        cls,
+        data: Any,
+        prune_lists: bool = False,
+        collapse_whitespace: bool = True,
+        seen: Optional[Set[int]] = None,
+    ) -> Any:
         if seen is None:
             seen = set()
 
@@ -43,7 +49,7 @@ class StatePruner:
                     if v is None:
                         continue
                     str_k = str(k)
-                    pruned_v = cls.prune(v, prune_lists=prune_lists, seen=seen)
+                    pruned_v = cls.prune(v, prune_lists=prune_lists, collapse_whitespace=collapse_whitespace, seen=seen)
                     if pruned_v is None:
                         continue
                     if isinstance(pruned_v, (str, dict, list, tuple, set, frozenset)) and len(pruned_v) == 0:
@@ -57,7 +63,7 @@ class StatePruner:
                     for item in data:
                         if item is None:
                             continue
-                        pruned_item = cls.prune(item, prune_lists=prune_lists, seen=seen)
+                        pruned_item = cls.prune(item, prune_lists=prune_lists, collapse_whitespace=collapse_whitespace, seen=seen)
                         if pruned_item is None:
                             continue
                         if isinstance(pruned_item, (str, dict)) and len(pruned_item) == 0:
@@ -65,13 +71,13 @@ class StatePruner:
                         pruned_list.append(pruned_item)
                     return pruned_list
                 else:
-                    return [cls.prune(item, prune_lists=prune_lists, seen=seen) for item in data]
+                    return [cls.prune(item, prune_lists=prune_lists, collapse_whitespace=collapse_whitespace, seen=seen) for item in data]
 
             elif isinstance(data, tuple):
-                return tuple(cls.prune(item, prune_lists=prune_lists, seen=seen) for item in data)
+                return tuple(cls.prune(item, prune_lists=prune_lists, collapse_whitespace=collapse_whitespace, seen=seen) for item in data)
 
             elif isinstance(data, (set, frozenset)):
-                pruned_items = [cls.prune(item, prune_lists=prune_lists, seen=seen) for item in data]
+                pruned_items = [cls.prune(item, prune_lists=prune_lists, collapse_whitespace=collapse_whitespace, seen=seen) for item in data]
                 try:
                     return sorted(pruned_items)
                 except TypeError:
@@ -83,9 +89,10 @@ class StatePruner:
                 return data
 
             elif isinstance(data, str):
+                if not collapse_whitespace:
+                    return data
                 if "\n" in data or "\r" in data:
-                    lines = [line.rstrip() for line in data.strip().splitlines()]
-                    return "\n".join(lines)
+                    return data
                 return " ".join(data.strip().split())
 
             return data

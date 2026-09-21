@@ -12,13 +12,24 @@ import threading
 import time
 from typing import Any, Dict, Generator, Iterable, Optional, Set
 
+import os
+
 logger = logging.getLogger("jevguard.cache")
 
 DEFAULT_VOLATILE_KEYS: Set[str] = {
-    "timestamp", "created_at", "updated_at",
-    "trace_id", "span_id", "request_id", "correlation_id", "nonce",
-    "createdat", "updatedat", "traceid", "requestid",
-    "x_trace_id", "x_request_id", "x_correlation_id", "xtraceid", "xrequestid"
+    "timestamp",
+    "trace_id",
+    "span_id",
+    "request_id",
+    "correlation_id",
+    "nonce",
+    "traceid",
+    "requestid",
+    "x_trace_id",
+    "x_request_id",
+    "x_correlation_id",
+    "xtraceid",
+    "xrequestid"
 }
 
 
@@ -34,7 +45,16 @@ class DeterministicCache:
     ):
         self.db_path = db_path
         self.max_memory_items = max_memory_items
-        self.ttl_seconds = ttl_seconds if ttl_seconds is not None else 86400.0
+        raw_ttl = os.environ.get("JEVGUARD_CACHE_TTL")
+        if raw_ttl is not None:
+            try:
+                self.ttl_seconds = float(raw_ttl)
+            except (ValueError, TypeError):
+                self.ttl_seconds = 3600.0
+        elif ttl_seconds is not None:
+            self.ttl_seconds = float(ttl_seconds)
+        else:
+            self.ttl_seconds = 3600.0
         self.default_ignore_keys = (
             set(DEFAULT_VOLATILE_KEYS).union({str(k).strip().lower().replace("-", "_") for k in default_ignore_keys})
             if default_ignore_keys is not None
