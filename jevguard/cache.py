@@ -15,7 +15,7 @@ from typing import Any, Dict, Generator, Iterable, Optional, Set
 logger = logging.getLogger("jevguard.cache")
 
 DEFAULT_VOLATILE_KEYS: Set[str] = {
-    "timestamp", "time", "created_at", "updated_at",
+    "timestamp", "created_at", "updated_at",
     "trace_id", "span_id", "request_id", "correlation_id", "nonce",
     "createdat", "updatedat", "traceid", "requestid",
     "x_trace_id", "x_request_id", "x_correlation_id", "xtraceid", "xrequestid"
@@ -29,14 +29,16 @@ class DeterministicCache:
         self,
         db_path: str = "jevguard_cache.db",
         max_memory_items: int = 500,
-        default_ignore_keys: Optional[Iterable[str]] = None
+        default_ignore_keys: Optional[Iterable[str]] = None,
+        ttl_seconds: Optional[float] = None
     ):
         self.db_path = db_path
         self.max_memory_items = max_memory_items
+        self.ttl_seconds = ttl_seconds if ttl_seconds is not None else 86400.0
         self.default_ignore_keys = (
-            {k.lower() for k in default_ignore_keys}
+            set(DEFAULT_VOLATILE_KEYS).union({str(k).strip().lower().replace("-", "_") for k in default_ignore_keys})
             if default_ignore_keys is not None
-            else DEFAULT_VOLATILE_KEYS
+            else set(DEFAULT_VOLATILE_KEYS)
         )
         self._memory_lru: Dict[str, Dict[str, Any]] = {}
         self._lock = threading.RLock()
@@ -145,9 +147,9 @@ class DeterministicCache:
         target_questions = wire_questions if wire_questions is not None else {}
 
         keys_to_ignore = (
-            {str(k).strip().lower().replace("-", "_") for k in ignore_keys}
+            set(DEFAULT_VOLATILE_KEYS).union({str(k).strip().lower().replace("-", "_") for k in ignore_keys})
             if ignore_keys is not None
-            else DEFAULT_VOLATILE_KEYS
+            else set(DEFAULT_VOLATILE_KEYS)
         )
         filtered_state = cls._strip_volatile_keys(target_state, keys_to_ignore) if keys_to_ignore else target_state
 
@@ -177,27 +179,37 @@ class DeterministicCache:
     def get(self, fingerprint: str) -> Optional[Dict[str, Any]]:
         with self._lock:
             if fingerprint in self._memory_lru:
-                self.stats["hits"] += 1
                 item = self._memory_lru[fingerprint]
-                self.stats["tokens_saved"] += item.get("tokens_estimate", 0)
-                item["hit_count"] = item.get("hit_count", 0) + 1
-                return item["data"]
+                entry_time = item.get("created_at", 0.0)
+                if self.ttl_seconds > 0 and (time.time() - entry_time) > self.ttl_seconds:
+                    del self._memory_lru[fingerprint]
+                else:
+                    self.stats["hits"] += 1
+                    tokens = item.get("tokens_estimate", 0)
+                    self.stats["tokens_saved"] += tokens
+                    self._promote_lru(fingerprint, item["data"], tokens, created_at=entry_time)
+                    return item["data"]
 
         try:
             with self._get_connection() as conn:
                 cur = conn.execute(
-                    "SELECT response_json, tokens_estimate FROM evaluation_cache WHERE fingerprint = ?",
+                    "SELECT response_json, tokens_estimate, created_at FROM evaluation_cache WHERE fingerprint = ?",
                     (fingerprint,)
                 )
                 row = cur.fetchone()
                 if row:
-                    with self._lock:
-                        self.stats["hits"] += 1
-                        data = json.loads(row["response_json"])
-                        tokens = row["tokens_estimate"]
-                        self.stats["tokens_saved"] += tokens
-                        self._promote_lru(fingerprint, data, tokens)
-                    return data
+                    entry_created_at = row["created_at"]
+                    if self.ttl_seconds > 0 and (time.time() - entry_created_at) > self.ttl_seconds:
+                        conn.execute("DELETE FROM evaluation_cache WHERE fingerprint = ?", (fingerprint,))
+                        conn.commit()
+                    else:
+                        with self._lock:
+                            self.stats["hits"] += 1
+                            data = json.loads(row["response_json"])
+                            tokens = row["tokens_estimate"]
+                            self.stats["tokens_saved"] += tokens
+                            self._promote_lru(fingerprint, data, tokens, created_at=entry_created_at)
+                        return data
         except Exception as err:
             logger.warning("Cache lookup error for %s: %s", fingerprint, err)
 
@@ -206,6 +218,7 @@ class DeterministicCache:
         return None
 
     def put(self, fingerprint: str, model: str, response_data: Dict[str, Any], input_tokens_estimate: int) -> None:
+        now = time.time()
         try:
             raw_json = json.dumps(response_data, separators=(",", ":"))
             with self._get_connection() as conn:
@@ -213,22 +226,31 @@ class DeterministicCache:
                     INSERT OR REPLACE INTO evaluation_cache (
                         fingerprint, model, response_json, created_at, hit_count, tokens_estimate
                     ) VALUES (?, ?, ?, ?, COALESCE((SELECT hit_count FROM evaluation_cache WHERE fingerprint = ?), 0), ?)
-                """, (fingerprint, model, raw_json, time.time(), fingerprint, input_tokens_estimate))
+                """, (fingerprint, model, raw_json, now, fingerprint, input_tokens_estimate))
                 conn.commit()
 
             with self._lock:
-                self._promote_lru(fingerprint, response_data, input_tokens_estimate)
+                self._promote_lru(fingerprint, response_data, input_tokens_estimate, created_at=now)
         except Exception as err:
             logger.warning("Cache store error for %s: %s", fingerprint, err)
 
-    def _promote_lru(self, fingerprint: str, data: Dict[str, Any], tokens_estimate: int) -> None:
+    def _promote_lru(self, fingerprint: str, data: Dict[str, Any], tokens_estimate: int, created_at: Optional[float] = None) -> None:
+        if fingerprint in self._memory_lru:
+            existing = self._memory_lru.pop(fingerprint)
+            hit_count = existing.get("hit_count", 0) + 1
+            entry_time = existing.get("created_at", created_at or time.time())
+        else:
+            hit_count = 0
+            entry_time = created_at or time.time()
+
         if len(self._memory_lru) >= self.max_memory_items:
             oldest_key = next(iter(self._memory_lru))
             del self._memory_lru[oldest_key]
         self._memory_lru[fingerprint] = {
             "data": data,
             "tokens_estimate": tokens_estimate,
-            "hit_count": 0
+            "hit_count": hit_count,
+            "created_at": entry_time
         }
 
     def clear(self) -> None:

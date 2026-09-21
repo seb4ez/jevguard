@@ -421,5 +421,78 @@ class TestJevGuardCLI(unittest.TestCase):
         self.assertNotIn("Traceback", proc.stderr)
 
 
+class TestHardeningRemediation(unittest.TestCase):
+    """Verifies library remediation for fail-open, whitespace, cache collision, and TTL."""
+
+    def test_pruner_preserves_multiline_code_and_diffs(self):
+        patch = (
+            "--- a/calculator.py\n"
+            "+++ b/calculator.py\n"
+            "@@ -1,4 +1,4 @@\n"
+            " def add(a: int, b: int) -> int:\n"
+            "-    return a - b\n"
+            "+    return a + b"
+        )
+        pruned = StatePruner.prune(patch)
+        self.assertEqual(pruned, patch)
+
+    def test_calibrator_score_missing_confidence_fails_closed(self):
+        calibrator = ResponseCalibrator()
+        answers = {"risk": {"type": "score", "score": 4}}
+        calibrated, summary = calibrator.calibrate(answers)
+        self.assertTrue(calibrated["risk"]["is_ambiguous"])
+        self.assertIn("low_confidence", calibrated["risk"]["calibration"]["reasons"])
+        self.assertEqual(summary["verdict"], "AMBIGUOUS_STATE")
+
+    def test_calibrator_noul_missing_value_fails_closed(self):
+        calibrator = ResponseCalibrator()
+        answers = {"is_valid": {"type": "noul"}}
+        calibrated, summary = calibrator.calibrate(answers)
+        self.assertTrue(calibrated["is_valid"]["is_ambiguous"])
+        self.assertIn("missing_noul_value", calibrated["is_valid"]["calibration"]["reasons"])
+        self.assertEqual(summary["verdict"], "AMBIGUOUS_STATE")
+
+    def test_calibrator_unknown_question_type_fails_closed(self):
+        calibrator = ResponseCalibrator()
+        answers = {"custom": {"type": "matrix_eval", "val": [1, 2, 3]}}
+        calibrated, summary = calibrator.calibrate(answers)
+        self.assertTrue(calibrated["custom"]["is_ambiguous"])
+        self.assertIn("unknown_question_type", calibrated["custom"]["calibration"]["reasons"])
+        self.assertEqual(summary["verdict"], "AMBIGUOUS_STATE")
+
+    def test_cache_volatile_keys_does_not_strip_time(self):
+        fp1 = DeterministicCache.compute_fingerprint(
+            model="jev-latest",
+            state={"action": "schedule", "time": "09:00"}
+        )
+        fp2 = DeterministicCache.compute_fingerprint(
+            model="jev-latest",
+            state={"action": "schedule", "time": "17:00"}
+        )
+        self.assertNotEqual(fp1, fp2, "Domain time field must not cause collision")
+
+    def test_cache_ignore_keys_unions_with_defaults(self):
+        state1 = {"user": "bob", "tenant_id": "tenant_1", "timestamp": 1000}
+        state2 = {"user": "bob", "tenant_id": "tenant_2", "timestamp": 2000}
+        fp1 = DeterministicCache.compute_fingerprint(
+            model="jev-latest",
+            state=state1,
+            ignore_keys=["tenant_id"]
+        )
+        fp2 = DeterministicCache.compute_fingerprint(
+            model="jev-latest",
+            state=state2,
+            ignore_keys=["tenant_id"]
+        )
+        self.assertEqual(fp1, fp2, "Both tenant_id and timestamp must be ignored")
+
+    def test_cache_ttl_expiration(self):
+        cache = DeterministicCache(db_path=":memory:", ttl_seconds=0.1)
+        cache.put("fp_test_ttl", "jev-latest", {"status": "ok"}, input_tokens_estimate=5)
+        self.assertEqual(cache.get("fp_test_ttl"), {"status": "ok"})
+        time.sleep(0.15)
+        self.assertIsNone(cache.get("fp_test_ttl"))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -30,11 +30,17 @@ class ResponseCalibrator:
 
         for name, ans in raw_answers.items():
             if not isinstance(ans, dict):
-                calibrated[name] = ans
+                calibrated[name] = {
+                    "is_ambiguous": True,
+                    "status": "AMBIGUOUS_STATE",
+                    "calibration": {"reasons": ["invalid_answer_structure"]},
+                    "raw": ans
+                }
+                ambiguous_questions.append(name)
                 continue
 
             item = dict(ans)
-            q_type = item.get("type", "").lower()
+            q_type = str(item.get("type", "")).strip().lower()
 
             if q_type == "choice":
                 self._calibrate_choice(item)
@@ -42,6 +48,13 @@ class ResponseCalibrator:
                 self._calibrate_score(item)
             elif q_type == "noul":
                 self._calibrate_noul(item)
+            else:
+                item["is_ambiguous"] = True
+                item["status"] = "AMBIGUOUS_STATE"
+                item["calibration"] = {
+                    "reasons": ["unknown_question_type"],
+                    "question_type": q_type
+                }
 
             if item.get("is_ambiguous", False):
                 ambiguous_questions.append(name)
@@ -110,15 +123,21 @@ class ResponseCalibrator:
         }
 
     def _calibrate_score(self, item: Dict[str, Any]) -> None:
-        try:
-            conf = float(item.get("confidence", 1.0))
-        except (ValueError, TypeError):
+        reasons = []
+        raw_conf = item.get("confidence")
+        if raw_conf is None:
             conf = 0.0
+            reasons.append("low_confidence")
+        else:
+            try:
+                conf = float(raw_conf)
+            except (ValueError, TypeError):
+                conf = 0.0
+                reasons.append("invalid_probability")
 
         probs = item.get("probabilities", {})
-        reasons = []
 
-        if conf < self.min_top_prob:
+        if conf < self.min_top_prob and "low_confidence" not in reasons:
             reasons.append("low_confidence")
 
         dispersion_gap = conf
@@ -152,10 +171,24 @@ class ResponseCalibrator:
     def _calibrate_noul(self, item: Dict[str, Any]) -> None:
         val = item.get("noul")
         if val is None:
+            item["is_ambiguous"] = True
+            item["status"] = "AMBIGUOUS_STATE"
+            item["calibration"] = {
+                "probability": 0.0,
+                "boundary_distance": 0.0,
+                "reasons": ["missing_noul_value"]
+            }
             return
         try:
             prob = float(val)
         except (ValueError, TypeError):
+            item["is_ambiguous"] = True
+            item["status"] = "AMBIGUOUS_STATE"
+            item["calibration"] = {
+                "probability": 0.0,
+                "boundary_distance": 0.0,
+                "reasons": ["invalid_probability"]
+            }
             return
 
         dist = abs(prob - 0.50)

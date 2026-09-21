@@ -83,6 +83,9 @@ class StatePruner:
                 return data
 
             elif isinstance(data, str):
+                if "\n" in data or "\r" in data:
+                    lines = [line.rstrip() for line in data.strip().splitlines()]
+                    return "\n".join(lines)
                 return " ".join(data.strip().split())
 
             return data
