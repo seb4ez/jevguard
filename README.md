@@ -1,5 +1,11 @@
 # JevGuard: Deterministic Decision Runtime for TypeSafe AI (Jev)
 
+[![MCP Server](https://img.shields.io/badge/MCP_Server-jevguard--mcp-blue.svg)](https://github.com/seb4ez/jevguard-mcp)
+[![Python 3.9+](https://img.shields.io/badge/Python-3.9+-brightgreen.svg)](https://www.python.org/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
+> **Official Model Context Protocol (MCP) Server:** JevGuard includes an official, zero-dependency MCP server designed for autonomous AI agents in Google Antigravity, Cursor IDE, Claude Desktop, and Cline: **[seb4ez/jevguard-mcp](https://github.com/seb4ez/jevguard-mcp)**.
+
 JevGuard is a deterministic evaluation, caching, and calibration runtime for TypeSafe AI's Jev model (System One). It wraps standard System One evaluations with closed-world escape injection, certainty calibration, state pruning, volatile key masking, zero-token SHA-256 caching, resilient retry backoff, and episodic session memory using only the Python standard library.
 
 ## Empirical Upstream Benchmark (50 Live Production Requests)
@@ -169,13 +175,54 @@ python examples/02_strict_finite_state_machine.py
 python examples/03_high_throughput_batch_caching.py
 ```
 
-## Model Context Protocol (MCP) Server
+## Official Model Context Protocol (MCP) Server
 
-JevGuard provides an official zero-dependency MCP server for AI coding assistants (Claude Desktop, Cursor IDE, LibreChat, and Cline):
+JevGuard provides an official, zero-dependency MCP server for AI coding assistants (Google Antigravity, Cursor IDE, Claude Desktop, LibreChat, and Cline):
 
-* **Repository**: [seb4ez/jevguard-mcp](https://github.com/seb4ez/jevguard-mcp)
-* **Execution**: Runs as a native stdio process using Python standard library (`python -m jevguard_mcp.server`).
-* **Available Primitives**: Evaluator with escape injection, probability calibrator (`AMBIGUOUS_STATE`), state pruner, and SHA-256 fingerprint generator.
+* **Repository**: **[seb4ez/jevguard-mcp](https://github.com/seb4ez/jevguard-mcp)**
+* **Architecture**: 100% Python standard library over JSON-RPC 2.0 stdio with SQLite WAL concurrency and transparent `:memory:` degradation.
+* **Autonomous Agent Tools**:
+  - `evaluate_command_safety`: Evaluates shell commands for destructive actions (`ALLOW_AUTONOMOUS`, `REQUIRE_HUMAN_APPROVAL`, `DENY_DESTRUCTIVE`).
+  - `verify_code_patch`: Evaluates git diffs for security regressions, broken syntax, or critical system impact under strict, balanced, or permissive risk tolerances.
+  - `evaluate_decision`: Evaluates architectural decisions from a list of options with automatic neutral escape injection (`UNRESOLVED_OR_OTHER`) and dispersion gap calibration.
+  - `jevguard_evaluate`: Low-level deterministic evaluation pipeline with state pruning and zero-token caching.
+  - `jevguard_calibrate`: Standalone certainty and probability dispersion calibrator (`AMBIGUOUS_STATE`).
+  - `jevguard_prune_state`: Sanitizes complex state payloads and collapses duplicate whitespace.
+  - `jevguard_cache_fingerprint`: Computes canonical SHA-256 fingerprints with volatile key masking.
+
+### Quick Setup for AI Coding Environments
+
+#### Cursor IDE (`.cursor/mcp.json`)
+```json
+{
+  "mcpServers": {
+    "jevguard": {
+      "command": "python",
+      "args": ["-m", "jevguard_mcp.server"],
+      "env": {
+        "TYPESAFE_API_KEY": "your_typesafe_api_key_here"
+      }
+    }
+  }
+}
+```
+
+#### Claude Desktop (`claude_desktop_config.json`)
+```json
+{
+  "mcpServers": {
+    "jevguard": {
+      "command": "python",
+      "args": ["-m", "jevguard_mcp.server"],
+      "env": {
+        "TYPESAFE_API_KEY": "your_typesafe_api_key_here"
+      }
+    }
+  }
+}
+```
+
+For complete MCP server documentation, empirical benchmark reports, and installation guides, visit the dedicated repository: **[github.com/seb4ez/jevguard-mcp](https://github.com/seb4ez/jevguard-mcp)**.
 
 ## Testing & Verification
 
