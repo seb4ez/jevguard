@@ -1,4 +1,4 @@
-# JevGuard: Deterministic Decision Runtime for TypeSafe AI (Jev)
+# JevGuard: Deterministic Caching and Guardrails for TypeSafe AI (Jev)
 
 [![MCP Server](https://img.shields.io/badge/MCP_Server-jevguard--mcp-blue.svg)](https://github.com/seb4ez/jevguard-mcp)
 [![Python 3.9+](https://img.shields.io/badge/Python-3.9+-brightgreen.svg)](https://www.python.org/)
@@ -6,42 +6,42 @@
 
 > **Official Model Context Protocol (MCP) Server:** JevGuard includes an official, zero-dependency MCP server designed for autonomous AI agents in Google Antigravity, Cursor IDE, Claude Desktop, and Cline: **[seb4ez/jevguard-mcp](https://github.com/seb4ez/jevguard-mcp)**.
 
-JevGuard is a deterministic evaluation, caching, and calibration runtime for TypeSafe AI's Jev model (System One). It wraps standard System One evaluations with closed-world escape injection, certainty calibration, state pruning, volatile key masking, zero-token SHA-256 caching, resilient retry backoff, and episodic session memory using only the Python standard library.
+JevGuard is an open-source Python library that provides local deterministic caching, state pruning, neutral escape injection, and calibration guardrails around TypeSafe AI's System One decision model. While upstream decision engines produce probabilistic outputs, JevGuard provides a strictly deterministic local layer: canonical JSON sorting, SHA-256 fingerprinting with volatile key masking, SQLite storage, and rule-based calibration checks using only the Python standard library.
 
-## Empirical Upstream Benchmark (50 Live Production Requests)
+## Upstream Latency and Cache Performance (50 Live Verification Requests)
 
-The following benchmark report reflects 50 complete requests executed against the official TypeSafe AI endpoint (`https://api.typesafe.ai/v1/systemone` using model `jev-latest`):
+The following benchmark report reflects 50 complete test requests executed against the official TypeSafe AI endpoint (`https://api.typesafe.ai/v1/systemone` using model `jev-latest`) from a development workstation. Latency comparisons contrast WAN roundtrips against local in-memory/SQLite cache lookups:
 
 ![JevGuard Benchmark Results](benchmark_results.png)
 
 | Key Metric | Direct Upstream API | JevGuard Runtime | Empirical Advantage |
 | :--- | :--- | :--- | :--- |
-| **Production Requests** | 50 live calls verified | 50 live calls verified | 100% pass rate across 5 operational domains |
+| **Verification Requests** | 50 live calls tested | 50 live calls tested | 100% transport pass rate across 5 test scenarios |
 | **Average Network Latency** | 784.53 ms | 735.88 ms (pruned) | State pruning reduces wire payload size |
-| **Deterministic Cache Hit** | 763.40 ms (144 tokens charged) | **0.099 ms** (**0 tokens**) | **7,711x latency speedup; 100% token savings** |
-| **Out-of-Scope Protection** | Forced False Positive (`chargeback`) | `UNRESOLVED_OR_OTHER` | **Zero false positive** via neutral escape injection |
-| **Uncertainty Calibration** | Raw unverified probabilities | `AMBIGUOUS_STATE` alert | Automatically flags bimodal ties and low certainty |
+| **Deterministic Cache Hit** | 763.40 ms (144 tokens charged) | **0.099 ms** (**0 tokens**) | **Sub-millisecond retrieval (0.099 ms vs 763 ms WAN roundtrip); 0 tokens billed** |
+| **Out-of-Scope Protection** | Forced False Positive (`chargeback`) | `UNRESOLVED_OR_OTHER` | Neutral escape injection catches off-topic inputs |
+| **Uncertainty Calibration** | Raw unverified probabilities | `AMBIGUOUS_STATE` alert | Flags bimodal ties and low certainty |
 | **Local Runtime Overhead** | 0 ms | **0.024 ms** | Sub-millisecond execution using pure Python stdlib |
 
 ## Why JevGuard
 
-TypeSafe AI's Jev model produces sub-second probabilistic evaluations over structured state. In production, raw calls run into three operational bottlenecks:
+TypeSafe AI's Jev model produces sub-second probabilistic evaluations over structured state. In production workflows, raw calls encounter three practical challenges:
 
-1. **Closed-World False Positives**: When categorical choice criteria lack a neutral fallback, Jev distributes all probability across defined options. If an unhandled or off-topic input arrives, the model is forced into a false positive.
-2. **Uncalibrated Ambiguity**: When inputs contain conflicting signals, probability distributions flatten. Selecting the top option without checking the runner-up margin leads to decisions made on near-coin-flip confidence.
-3. **Repeated Query Cost & Cache Misses**: Identical state checks inside agent loops consume network latency and token budgets. If payloads contain timestamps or request IDs, naive caches miss on every call.
+1. **Closed-World False Positives**: When categorical choice criteria lack a neutral fallback, the model distributes all probability across defined options. If an unhandled or off-topic input arrives, the model selects the closest available option.
+2. **Uncalibrated Ambiguity**: When inputs contain conflicting signals, probability distributions flatten. Selecting the top option without checking the runner-up margin leads to decisions made on low confidence.
+3. **Repeated Query Cost and Cache Misses**: Identical state checks inside agent loops consume network latency and token budgets. If payloads contain dynamic timestamps or request IDs, standard caches miss on every call.
 
 ## Features
 
-- **Closed-World Escape Injection**: Detects categorical choice rules without a fallback and automatically injects `UNRESOLVED_OR_OTHER`. Off-topic inputs route to this escape option instead of triggering false positives.
-- **Strict Enum Support**: Set `closed_world=True` on `Choice` or `auto_inject_escapes=False` on the client when building strict, exhaustive enums where third-party options must not be introduced.
-- **Certainty & Dispersion Calibrator**: Flags decisions where top probability is below 0.40 or the margin between the first and second choices is below 0.15 as `AMBIGUOUS_STATE`.
-- **Volatile Metadata Masking**: Automatically ignores ephemeral fields (`timestamp`, `created_at`, `trace_id`, `request_id`, `nonce`) during SHA-256 fingerprinting, ensuring real-world production cache hits.
+- **Closed-World Escape Injection**: Detects categorical choice rules without a fallback and injects `UNRESOLVED_OR_OTHER`. Off-topic inputs route to this escape option instead of triggering forced choices.
+- **Strict Enum Support**: Set `closed_world=True` on `Choice` or `auto_inject_escapes=False` on the client when building strict enums where additional options must not be introduced.
+- **Certainty and Dispersion Heuristics**: Uses configurable operational defaults (top probability below 0.40 or top-to-runner-up margin below 0.15) to flag indecisive distributions as `AMBIGUOUS_STATE`.
+- **Volatile Metadata Masking**: Automatically ignores ephemeral fields (`timestamp`, `trace_id`, `request_id`, `nonce`) during SHA-256 fingerprinting, ensuring production cache hits across repeated queries.
 - **Sub-Millisecond Overhead**: Pure local CPU computation runs in under 0.20 ms (198 microseconds) per evaluation.
 - **Zero-Token SHA-256 Cache**: Hashes canonical sorted JSON. Identical requests return in under 1 millisecond with zero network overhead and zero token cost.
-- **Concurrent Batch & Async Support**: Built-in `batch_evaluate` with thread pooling and native `async_evaluate` for `asyncio` event loops.
+- **Concurrent Batch and Async Support**: Built-in `batch_evaluate` with thread pooling and native `async_evaluate` for `asyncio` event loops.
 - **Resilient Network Retries**: Exponential backoff with jitter and `Retry-After` header parsing for HTTP 429 and 5xx server errors.
-- **Episodic SQLite Memory**: Records session interaction turns with thread-local connection reuse and builds rolling summaries without retransmitting raw history.
+- **Episodic SQLite Memory**: Records session interaction turns with transactional serialization and builds rolling summaries without retransmitting raw history.
 - **Zero Dependencies**: Pure Python 3.9+ standard library (`urllib`, `sqlite3`, `hashlib`, `json`, `threading`, `concurrent.futures`). No pip dependencies, no Node.js.
 
 ## Installation
@@ -256,6 +256,15 @@ Run the live upstream comparative test (requires `TYPESAFE_API_KEY`):
 ```bash
 python run_live_certification_tests.py
 ```
+
+## Project Status and Validation Transparency
+
+JevGuard is an independent, community-driven open-source project (v1.0.0) built strictly with the Python standard library. Initial implementation and test suites were developed iteratively using AI-assisted engineering and local unit test validation.
+
+Key design caveats:
+- The local runtime (canonicalization, hashing, state pruning, and calibration checks) is deterministic, whereas the remote TypeSafe AI / Jev service produces probabilistic classifications.
+- Default calibration thresholds (such as top probability below 0.40 or margin below 0.15) represent operational heuristics for tie and uncertainty detection rather than parameters fitted on a specific domain corpus. Users can configure them according to their domain risk tolerance.
+- We welcome external peer review, empirical validation on production datasets, and community contributions.
 
 ## License
 
