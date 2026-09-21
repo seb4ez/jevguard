@@ -207,8 +207,8 @@ class TestSubsystem4VolatileMaskingAndCache(unittest.TestCase):
     def test_15_volatile_keys_nested_mixed(self):
         """Test 15: Strips volatile keys inside nested dicts, tuples, and sets with dashed names."""
         cache = SemanticCache(db_path=":memory:")
-        state_1 = {"meta": {"Request-Id": "req-1", "created-at": 100}, "payload": {"val": 5}}
-        state_2 = {"meta": {"request_id": "req-2", "created_at": 200}, "payload": {"val": 5}}
+        state_1 = {"meta": {"Request-Id": "req-1", "correlation-id": "cid-100"}, "payload": {"val": 5}}
+        state_2 = {"meta": {"request_id": "req-2", "correlation_id": "cid-200"}, "payload": {"val": 5}}
         fp_1 = cache.compute_fingerprint(state_1, {})
         fp_2 = cache.compute_fingerprint(state_2, {})
         self.assertEqual(fp_1, fp_2)

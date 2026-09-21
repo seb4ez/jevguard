@@ -541,6 +541,60 @@ class TestHardeningRemediation(unittest.TestCase):
         pruned = StatePruner.prune(cmd, collapse_whitespace=False)
         self.assertEqual(pruned, cmd)
 
+    def test_client_endpoint_property_setter_validation(self):
+        client = JevGuardClient(api_key="test")
+        with self.assertRaises(JevGuardConfigError):
+            client.endpoint = "https://attacker.com/v1"
+        client.endpoint = "https://api.typesafe.ai/v1/systemone"
+        self.assertEqual(client.endpoint, "https://api.typesafe.ai/v1/systemone")
+
+    def test_choice_explicit_escape_and_closed_world(self):
+        c1 = Choice("route", {"a": "A", "b": "B"}, closed_world=True, auto_inject_escape=True)
+        self.assertTrue(c1.auto_inject_escape)
+        c2 = Choice("route", {"a": "A", "b": "B"}, closed_world=False, auto_inject_escape=False)
+        self.assertFalse(c2.auto_inject_escape)
+
+    def test_optimizer_missing_type_raises_error(self):
+        opt = QuestionOptimizer()
+        with self.assertRaises(ValueError) as ctx:
+            opt.optimize_and_wire({"k": 1}, {"q1": {"instructions": "do stuff"}})
+        self.assertIn("missing required 'type' field", str(ctx.exception).lower())
+
+    def test_answer_models_resilient_float_parsing(self):
+        na = NoulAnswer({"noul": "not_a_number"})
+        self.assertEqual(na.noul, 0.0)
+        sa = ScoreAnswer({"score": "bad", "confidence": float("nan")})
+        self.assertEqual(sa.score, 0.0)
+        self.assertEqual(sa.confidence, 0.0)
+        ca = ChoiceAnswer({"choice": "opt", "confidence": float("inf")})
+        self.assertEqual(ca.confidence, 0.0)
+
+    def test_episodic_memory_concurrent_threadpool_records(self):
+        import tempfile
+        import os
+        from concurrent.futures import ThreadPoolExecutor
+
+        fd, db_path = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+        try:
+            mem = EpisodicMemory(db_path=db_path)
+            sess_id = "concurrent_session"
+
+            def _record(idx: int) -> int:
+                return mem.record_turn(sess_id, {"idx": idx}, {"ans": idx}, "CONFIDENT")
+
+            with ThreadPoolExecutor(max_workers=10) as executor:
+                turn_numbers = list(executor.map(_record, range(20)))
+
+            self.assertEqual(len(set(turn_numbers)), 20)
+            self.assertEqual(sorted(turn_numbers), list(range(1, 21)))
+        finally:
+            if os.path.exists(db_path):
+                try:
+                    os.remove(db_path)
+                except Exception:
+                    pass
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

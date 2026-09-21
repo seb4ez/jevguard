@@ -3,6 +3,7 @@ jevguard.models - Canonical question primitives and answer wrappers for TypeSafe
 Drop-in compatibility with official typesafe-sdk specification.
 """
 
+import math
 from typing import Any, Dict, List, Optional, Union
 
 
@@ -67,14 +68,17 @@ class Choice(Question):
         instructions: str,
         criteria: Dict[str, Optional[str]],
         closed_world: bool = False,
-        auto_inject_escape: bool = True
+        auto_inject_escape: Optional[bool] = None
     ):
         super().__init__("choice", instructions)
         if not isinstance(criteria, dict) or len(criteria) == 0:
             raise ValueError("Choice primitive requires 'criteria' as a non-empty dictionary.")
         self.criteria = {k: (v or "") for k, v in criteria.items()}
         self.closed_world = closed_world
-        self.auto_inject_escape = auto_inject_escape and not closed_world
+        if auto_inject_escape is not None:
+            self.auto_inject_escape = bool(auto_inject_escape)
+        else:
+            self.auto_inject_escape = not closed_world
 
     def to_wire(self) -> Dict[str, Any]:
         return {
@@ -87,7 +91,11 @@ class Choice(Question):
 class NoulAnswer:
     def __init__(self, raw: Dict[str, Any]):
         self.type = "noul"
-        self.noul: float = float(raw.get("noul", 0.0))
+        try:
+            val = float(raw.get("noul", 0.0))
+            self.noul: float = val if not (math.isnan(val) or math.isinf(val)) else 0.0
+        except (ValueError, TypeError):
+            self.noul = 0.0
         self.is_affirmative: bool = self.noul >= 0.5
         self.is_ambiguous: bool = bool(raw.get("is_ambiguous", False))
         self.status: str = raw.get("status", "CONFIDENT")
@@ -99,8 +107,16 @@ class NoulAnswer:
 class ScoreAnswer:
     def __init__(self, raw: Dict[str, Any]):
         self.type = "score"
-        self.score: float = float(raw.get("score", 0.0))
-        self.confidence: float = float(raw.get("confidence", 1.0))
+        try:
+            s_val = float(raw.get("score", 0.0))
+            self.score: float = s_val if not (math.isnan(s_val) or math.isinf(s_val)) else 0.0
+        except (ValueError, TypeError):
+            self.score = 0.0
+        try:
+            c_val = float(raw.get("confidence", 1.0))
+            self.confidence: float = c_val if not (math.isnan(c_val) or math.isinf(c_val)) else 0.0
+        except (ValueError, TypeError):
+            self.confidence = 0.0
         self.legend: Dict[str, str] = raw.get("legend", {})
         self.probabilities: Dict[str, float] = raw.get("probabilities", {})
         self.is_ambiguous: bool = bool(raw.get("is_ambiguous", False))
@@ -114,7 +130,11 @@ class ChoiceAnswer:
     def __init__(self, raw: Dict[str, Any]):
         self.type = "choice"
         self.choice: str = str(raw.get("choice", ""))
-        self.confidence: float = float(raw.get("confidence", 0.0))
+        try:
+            c_val = float(raw.get("confidence", 0.0))
+            self.confidence: float = c_val if not (math.isnan(c_val) or math.isinf(c_val)) else 0.0
+        except (ValueError, TypeError):
+            self.confidence = 0.0
         self.probabilities: Dict[str, float] = raw.get("probabilities", {})
         self.is_ambiguous: bool = bool(raw.get("is_ambiguous", False))
         self.status: str = raw.get("status", "CONFIDENT")

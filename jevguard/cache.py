@@ -66,8 +66,12 @@ class DeterministicCache:
         self._shared_conn: Optional[sqlite3.Connection] = None
 
         if self.db_path == ":memory:":
-            self._shared_conn = sqlite3.connect(":memory:", check_same_thread=False)
+            self._shared_conn = sqlite3.connect(":memory:", check_same_thread=False, timeout=60.0)
             self._shared_conn.row_factory = sqlite3.Row
+            try:
+                self._shared_conn.execute("PRAGMA busy_timeout = 60000")
+            except Exception:
+                pass
 
         self.stats = {
             "hits": 0,
@@ -84,9 +88,10 @@ class DeterministicCache:
         else:
             conn = getattr(self._local, "conn", None)
             if conn is None:
-                conn = sqlite3.connect(self.db_path, timeout=20.0)
+                conn = sqlite3.connect(self.db_path, timeout=60.0)
                 conn.row_factory = sqlite3.Row
                 try:
+                    conn.execute("PRAGMA busy_timeout = 60000")
                     conn.execute("PRAGMA journal_mode=WAL")
                     conn.execute("PRAGMA synchronous=NORMAL")
                 except Exception as e:
@@ -247,9 +252,15 @@ class DeterministicCache:
                         fingerprint, model, response_json, created_at, hit_count, tokens_estimate
                     ) VALUES (?, ?, ?, ?, COALESCE((SELECT hit_count FROM evaluation_cache WHERE fingerprint = ?), 0), ?)
                 """, (fingerprint, model, raw_json, now, fingerprint, input_tokens_estimate))
+                if self.ttl_seconds > 0:
+                    conn.execute("DELETE FROM evaluation_cache WHERE created_at < ?", (now - self.ttl_seconds,))
                 conn.commit()
 
             with self._lock:
+                if self.ttl_seconds > 0:
+                    expired_keys = [k for k, v in self._memory_lru.items() if (now - v.get("created_at", 0.0)) > self.ttl_seconds]
+                    for k in expired_keys:
+                        del self._memory_lru[k]
                 self._promote_lru(fingerprint, response_data, input_tokens_estimate, created_at=now)
         except Exception as err:
             logger.warning("Cache store error for %s: %s", fingerprint, err)

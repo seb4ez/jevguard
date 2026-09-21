@@ -68,9 +68,11 @@ def is_authorized_endpoint(endpoint: str) -> bool:
         for entry in custom_allowed.split(","):
             entry = entry.strip()
             if entry:
+                if any(c in entry for c in "*?[]"):
+                    continue
                 try:
                     custom_parsed = urllib.parse.urlsplit(entry if "://" in entry else f"https://{entry}")
-                    if custom_parsed.hostname:
+                    if custom_parsed.hostname and not any(c in custom_parsed.hostname for c in "*?[]"):
                         allowed_hosts.add(custom_parsed.hostname.lower())
                 except Exception:
                     pass
@@ -98,10 +100,10 @@ class JevGuardClient:
         initial_backoff: float = 0.5
     ):
         self.api_key = api_key or os.environ.get("TYPESAFE_API_KEY", "").strip()
-        self.endpoint = endpoint
-        if not is_authorized_endpoint(self.endpoint):
+        self._endpoint = str(endpoint or "").strip()
+        if not is_authorized_endpoint(self._endpoint):
             raise JevGuardConfigError(
-                f"Endpoint '{self.endpoint}' is not permitted. Only official TypeSafe AI endpoints or JEVGUARD_ALLOWED_ENDPOINTS are authorized."
+                f"Endpoint '{self._endpoint}' is not permitted. Only official TypeSafe AI endpoints or JEVGUARD_ALLOWED_ENDPOINTS are authorized."
             )
         self.model = model
         self.enable_cache = enable_cache
@@ -119,6 +121,19 @@ class JevGuardClient:
             else None
         )
         self.memory = EpisodicMemory(db_path=memory_db_path) if enable_memory else None
+
+    @property
+    def endpoint(self) -> str:
+        return self._endpoint
+
+    @endpoint.setter
+    def endpoint(self, value: str) -> None:
+        val = str(value or "").strip()
+        if not is_authorized_endpoint(val):
+            raise JevGuardConfigError(
+                f"Endpoint '{val}' is not permitted. Only official TypeSafe AI endpoints or JEVGUARD_ALLOWED_ENDPOINTS are authorized."
+            )
+        self._endpoint = val
 
     def evaluate(
         self,
@@ -318,6 +333,11 @@ class JevGuardClient:
         return self.initial_backoff * (2 ** attempt) + random.uniform(0.05, 0.25)
 
     def _dispatch_wire(self, wire_payload: Dict[str, Any], timeout: float = 30.0) -> Dict[str, Any]:
+        canonical_endpoint = self.endpoint
+        if not is_authorized_endpoint(canonical_endpoint):
+            raise JevGuardConfigError(
+                f"Endpoint '{canonical_endpoint}' is not permitted. Only official TypeSafe AI endpoints or JEVGUARD_ALLOWED_ENDPOINTS are authorized."
+            )
         raw_payload = json.dumps(wire_payload, separators=(",", ":")).encode("utf-8")
         headers = {
             "Authorization": f"Bearer {self.api_key}",
@@ -331,7 +351,7 @@ class JevGuardClient:
 
         while attempts < max_attempts:
             attempts += 1
-            req = urllib.request.Request(self.endpoint, data=raw_payload, headers=headers, method="POST")
+            req = urllib.request.Request(canonical_endpoint, data=raw_payload, headers=headers, method="POST")
             t0 = time.perf_counter()
 
             try:

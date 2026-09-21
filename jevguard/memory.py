@@ -24,8 +24,12 @@ class EpisodicMemory:
         self._local = threading.local()
         self._shared_conn: Optional[sqlite3.Connection] = None
         if self.db_path == ":memory:":
-            self._shared_conn = sqlite3.connect(":memory:", check_same_thread=False)
+            self._shared_conn = sqlite3.connect(":memory:", check_same_thread=False, timeout=60.0)
             self._shared_conn.row_factory = sqlite3.Row
+            try:
+                self._shared_conn.execute("PRAGMA busy_timeout = 60000")
+            except Exception:
+                pass
         self._init_db()
 
     @contextlib.contextmanager
@@ -36,9 +40,10 @@ class EpisodicMemory:
         else:
             conn = getattr(self._local, "conn", None)
             if conn is None:
-                conn = sqlite3.connect(self.db_path, timeout=20.0)
+                conn = sqlite3.connect(self.db_path, timeout=60.0)
                 conn.row_factory = sqlite3.Row
                 try:
+                    conn.execute("PRAGMA busy_timeout = 60000")
                     conn.execute("PRAGMA journal_mode=WAL")
                     conn.execute("PRAGMA synchronous=NORMAL")
                 except Exception as e:
@@ -79,19 +84,24 @@ class EpisodicMemory:
 
         with self._lock:
             with self._get_connection() as conn:
-                cur = conn.execute(
-                    "SELECT COALESCE(MAX(turn_number), 0) + 1 AS next_turn FROM session_turns WHERE session_id = ?",
-                    (clean_session,)
-                )
-                next_turn = cur.fetchone()["next_turn"]
+                conn.execute("BEGIN IMMEDIATE")
+                try:
+                    cur = conn.execute(
+                        "SELECT COALESCE(MAX(turn_number), 0) + 1 AS next_turn FROM session_turns WHERE session_id = ?",
+                        (clean_session,)
+                    )
+                    next_turn = cur.fetchone()["next_turn"]
 
-                conn.execute("""
-                    INSERT INTO session_turns (
-                        session_id, turn_number, state_json, answers_json, calibration_verdict, timestamp
-                    ) VALUES (?, ?, ?, ?, ?, ?)
-                """, (clean_session, next_turn, state_str, answers_str, verdict, time.time()))
-                conn.commit()
-                return next_turn
+                    conn.execute("""
+                        INSERT INTO session_turns (
+                            session_id, turn_number, state_json, answers_json, calibration_verdict, timestamp
+                        ) VALUES (?, ?, ?, ?, ?, ?)
+                    """, (clean_session, next_turn, state_str, answers_str, verdict, time.time()))
+                    conn.commit()
+                    return next_turn
+                except Exception:
+                    conn.rollback()
+                    raise
 
     def get_session_history(self, session_id: str, limit: int = 10) -> List[Dict[str, Any]]:
         if not session_id:

@@ -121,10 +121,11 @@ class QuestionOptimizer:
         state: Any,
         questions: Union[Dict[str, Any], List[Dict[str, Any]]],
         model: Optional[str] = None,
-        auto_inject_escapes: Optional[bool] = None
+        auto_inject_escapes: Optional[bool] = None,
+        collapse_whitespace: bool = True
     ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
         target_model = (model or self.default_model).strip() or self.default_model
-        pruned_state = StatePruner.prune(state)
+        pruned_state = StatePruner.prune(state, collapse_whitespace=collapse_whitespace)
 
         should_inject = self.auto_inject_escapes if auto_inject_escapes is None else auto_inject_escapes
         wire_questions, injected_escapes = self.normalize_questions(questions, auto_inject_escapes=should_inject)
@@ -207,7 +208,9 @@ class QuestionOptimizer:
             if isinstance(q, Choice):
                 allow_escape = getattr(q, "auto_inject_escape", True)
         elif isinstance(q, dict):
-            q_type = q.get("type", "noul").lower()
+            if "type" not in q:
+                raise ValueError(f"Question '{name}' definition missing required 'type' field.")
+            q_type = str(q.get("type", "")).strip().lower()
             instructions = q.get("instructions") or q.get("question") or ""
             if q_type == "noul":
                 wire_dict = Noul(instructions, q.get("criteria")).to_wire()
@@ -216,8 +219,10 @@ class QuestionOptimizer:
             elif q_type == "choice":
                 crit = q.get("criteria") if isinstance(q.get("criteria"), dict) else q.get("options", {})
                 closed = bool(q.get("closed_world", False))
-                allow_escape = q.get("auto_inject_escape", not closed)
-                wire_dict = Choice(instructions, crit, closed_world=closed, auto_inject_escape=allow_escape).to_wire()
+                auto_esc = q.get("auto_inject_escape")
+                choice_obj = Choice(instructions, crit, closed_world=closed, auto_inject_escape=auto_esc)
+                allow_escape = choice_obj.auto_inject_escape
+                wire_dict = choice_obj.to_wire()
             else:
                 raise ValueError(f"Unsupported question type '{q_type}' in '{name}'")
         else:
