@@ -13,7 +13,7 @@ JevGuard is an open-source Python library that provides local deterministic cach
 
 The following benchmark report reflects 50 complete test requests executed against the official TypeSafe AI endpoint (`https://api.typesafe.ai/v1/systemone` using model `jev-latest`) from a development workstation. Latency comparisons contrast WAN roundtrips against local in-memory/SQLite cache lookups:
 
-![JevGuard Benchmark Results](benchmark_results.png)
+![JevGuard Benchmark Results](https://raw.githubusercontent.com/seb4ez/jevguard/main/benchmark_results.png)
 
 | Key Metric | Direct Upstream API | JevGuard Runtime | Empirical Advantage |
 | :--- | :--- | :--- | :--- |
