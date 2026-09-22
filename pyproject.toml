@@ -3,20 +3,19 @@ requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "jevguard"
+name = "jevguard-core"
 version = "1.0.0"
 description = "Deterministic decision runtime, zero-token caching, and certainty calibrator for TypeSafe AI (Jev)."
 readme = "README.md"
-license = { text = "MIT" }
+license = "MIT"
 authors = [
     { name = "seb4ez" }
 ]
 requires-python = ">=3.9"
 dependencies = []
 classifiers = [
-    "Development Status :: 4 - Beta",
+    "Development Status :: 5 - Production/Stable",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",

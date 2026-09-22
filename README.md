@@ -1,6 +1,7 @@
 # JevGuard: Deterministic Caching and Guardrails for TypeSafe AI (Jev)
 
-[![MCP Server](https://img.shields.io/badge/MCP_Server-jevguard--mcp-blue.svg)](https://github.com/seb4ez/jevguard-mcp)
+[![PyPI version](https://img.shields.io/pypi/v/jevguard-core.svg)](https://pypi.org/project/jevguard-core/)
+[![MCP Server](https://img.shields.io/badge/MCP_Server-jevguard--mcp-blue.svg)](https://pypi.org/project/jevguard-mcp/)
 [![Python 3.9+](https://img.shields.io/badge/Python-3.9+-brightgreen.svg)](https://www.python.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
@@ -46,7 +47,13 @@ TypeSafe AI's Jev model produces sub-second probabilistic evaluations over struc
 
 ## Installation
 
-Install locally with pip:
+Install the official package directly from PyPI:
+
+```bash
+pip install jevguard-core
+```
+
+Or install from source:
 
 ```bash
 git clone https://github.com/seb4ez/jevguard.git
@@ -54,7 +61,12 @@ cd jevguard
 pip install .
 ```
 
-Or copy the `jevguard` directory directly into your project.
+After installation, the package is imported directly as `jevguard`:
+
+```python
+import jevguard
+from jevguard import JevGuardClient, Choice, Score, Noul
+```
 
 Set your TypeSafe AI API key:
 
